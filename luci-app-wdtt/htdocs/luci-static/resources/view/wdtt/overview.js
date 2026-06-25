@@ -1,5 +1,7 @@
 'use strict';
 'require view';
+'require ui';
+'require dom';
 'require form';
 'require uci';
 'require poll';
