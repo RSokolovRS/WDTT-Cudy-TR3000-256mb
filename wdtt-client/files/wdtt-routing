@@ -1,0 +1,226 @@
+#!/bin/sh
+# WDTT selective routing — policy routing как в Podkop
+# Приоритет: routing_excluded_ips > fully_routed_ips > domain/subnet lists
+
+. /lib/functions.sh
+
+MARK=0x777474
+TABLE=100
+TABLE_NAME=wdtt
+IFACE="${2:-wg-wdtt}"
+
+IPSET_ROUTE=wdtt_route
+IPSET_EXCL=wdtt_excl
+IPSET_SRC=wdtt_src
+
+DNSMASQ_SNIPPET=/tmp/dnsmasq.d/wdtt.conf
+NFT_HOOK=/etc/nftables.d/99-wdtt.nft
+STATE_DIR=/var/run/wdtt
+
+log() { logger -t wdtt-routing "$*"; }
+
+ipset_create() {
+	local name="$1"
+	ipset destroy "$name" 2>/dev/null
+	ipset create "$name" hash:net family inet hashsize 4096 maxelem 65536 2>/dev/null || \
+	ipset flush "$name" 2>/dev/null
+}
+
+uci_list() {
+	local section="$1" option="$2"
+	uci -q show "wdtt.${section}.${option}" 2>/dev/null | \
+		sed -n "s/^wdtt\.${section}\.${option}\(=\|\[\d\+\]=\)//p" | \
+		sed "s/^'//;s/'$//"
+}
+
+collect_domains() {
+	local section="$1" type="$2" list_url domain
+
+	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+	[ "$(uci -q get wdtt.${section}.type)" != "$type" ] && return 0
+
+	list_url="$(uci -q get wdtt.${section}.list_url)"
+	if [ -n "$list_url" ]; then
+		wget -qO- "$list_url" 2>/dev/null | while read -r domain; do
+			domain="${domain%%#*}"
+			domain="$(echo "$domain" | tr -d '[:space:]')"
+			[ -n "$domain" ] && echo "$domain"
+		done
+	fi
+
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.domain\[\d\+\]='\(.*\)'$/\1/p"
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.domains\[\d\+\]='\(.*\)'$/\1/p"
+}
+
+collect_subnets() {
+	local section="$1" type="$2"
+	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+	[ "$(uci -q get wdtt.${section}.type)" != "$type" ] && return 0
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.subnet\[\d\+\]='\(.*\)'$/\1/p"
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.subnets\[\d\+\]='\(.*\)'$/\1/p"
+}
+
+collect_source_ips() {
+	local section="$1"
+	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+	[ "$(uci -q get wdtt.${section}.type)" != "route" ] && return 0
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.source_ip\[\d\+\]='\(.*\)'$/\1/p"
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.fully_routed_ip\[\d\+\]='\(.*\)'$/\1/p"
+}
+
+build_dnsmasq() {
+	mkdir -p "$(dirname "$DNSMASQ_SNIPPET")"
+	: > "$DNSMASQ_SNIPPET"
+
+	config_load wdtt
+	config_foreach build_rule_dnsmasq rule
+}
+
+build_rule_dnsmasq() {
+	local section="$1" type domain
+
+	type="$(uci -q get wdtt.${section}.type)"
+	[ "$type" = "route" ] || return 0
+	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+
+	collect_domains "$section" route | while read -r domain; do
+		[ -n "$domain" ] && echo "ipset=/${domain}/${IPSET_ROUTE}" >> "$DNSMASQ_SNIPPET"
+	done
+}
+
+populate_ipsets() {
+	local section subnet ip
+
+	ipset_create "$IPSET_ROUTE"
+	ipset_create "$IPSET_EXCL"
+	ipset_create "$IPSET_SRC"
+
+	# Исключённые устройства (всегда напрямую) — в globals
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.globals\.routing_excluded_ip\[\d\+\]='\(.*\)'$/\1/p" | \
+	while read -r ip; do
+		[ -n "$ip" ] && ipset add "$IPSET_EXCL" "$ip" 2>/dev/null
+	done
+	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.globals\.routing_excluded_ips\[\d\+\]='\(.*\)'$/\1/p" | \
+	while read -r ip; do
+		[ -n "$ip" ] && ipset add "$IPSET_EXCL" "$ip" 2>/dev/null
+	done
+
+	config_load wdtt
+	config_foreach populate_rule_ipsets rule
+}
+
+populate_rule_ipsets() {
+	local section="$1" type subnet ip
+
+	type="$(uci -q get wdtt.${section}.type)"
+	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+
+	case "$type" in
+		route)
+			collect_subnets "$section" route | while read -r subnet; do
+				[ -n "$subnet" ] && ipset add "$IPSET_ROUTE" "$subnet" 2>/dev/null
+			done
+			collect_source_ips "$section" | while read -r ip; do
+				[ -n "$ip" ] && ipset add "$IPSET_SRC" "$ip" 2>/dev/null
+			done
+			;;
+		exclusion)
+			collect_subnets "$section" exclusion | while read -r subnet; do
+				[ -n "$subnet" ] && ipset add "$IPSET_EXCL" "$subnet" 2>/dev/null
+			done
+			;;
+	esac
+}
+
+setup_nft() {
+	mkdir -p /etc/nftables.d
+	cat > "$NFT_HOOK" <<EOF
+table inet wdtt {
+	chain prerouting {
+		type filter hook prerouting priority mangle; policy accept;
+
+		# Исключения — не маркируем (идут напрямую)
+		ip saddr @${IPSET_EXCL} return
+		ip daddr @${IPSET_EXCL} return
+
+		# Устройства с полной маршрутизацией через WDTT
+		ip saddr @${IPSET_SRC} meta mark set ${MARK}
+
+		# Домены/подсети из списков
+		ip daddr @${IPSET_ROUTE} meta mark set ${MARK}
+	}
+}
+EOF
+
+	nft -f "$NFT_HOOK" 2>/dev/null || fw4 reload 2>/dev/null
+}
+
+setup_policy_routing() {
+	local wan_gw
+
+	# Очистка старых правил
+	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
+	ip route flush table "$TABLE" 2>/dev/null
+
+	ip rule add fwmark "$MARK" table "$TABLE" priority 10050
+	ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null
+
+	# LAN → WDTT forwarding
+	wan_gw="$(ip route show default | awk '/default/ {print $3; exit}')"
+	[ -n "$wan_gw" ] && ip route add default via "$wan_gw" table main 2>/dev/null
+}
+
+reload_dnsmasq() {
+	[ -f /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq restart 2>/dev/null
+}
+
+do_start() {
+	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
+	log "starting selective routing on $IFACE"
+
+	build_dnsmasq
+	populate_ipsets
+	setup_nft
+	setup_policy_routing
+	reload_dnsmasq
+
+	echo "selective" > "$STATE_DIR/routing.mode"
+	log "selective routing active"
+}
+
+do_stop() {
+	log "stopping selective routing"
+
+	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
+	ip route flush table "$TABLE" 2>/dev/null
+
+	nft delete table inet wdtt 2>/dev/null
+	rm -f "$NFT_HOOK" "$DNSMASQ_SNIPPET"
+
+	ipset destroy "$IPSET_ROUTE" 2>/dev/null
+	ipset destroy "$IPSET_EXCL" 2>/dev/null
+	ipset destroy "$IPSET_SRC" 2>/dev/null
+
+	reload_dnsmasq
+	rm -f "$STATE_DIR/routing.mode"
+	log "selective routing stopped"
+}
+
+do_reload() {
+	do_stop
+	do_start
+}
+
+case "$1" in
+	start)
+		routing_mode="$(uci -q get wdtt.globals.routing_mode)"
+		[ "$routing_mode" = "full" ] && exit 0
+		[ "$(uci -q get wdtt.globals.full_tunnel)" = "1" ] && exit 0
+		do_start
+		;;
+	stop)   do_stop ;;
+	reload) do_reload ;;
+	*)      echo "Usage: $0 {start|stop|reload} [iface]" >&2; exit 1 ;;
+esac
+
+exit 0

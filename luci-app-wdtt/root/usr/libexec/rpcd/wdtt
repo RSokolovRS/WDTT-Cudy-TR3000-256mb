@@ -1,0 +1,53 @@
+#!/bin/sh
+# rpcd ubus plugin for WDTT status
+
+. /usr/share/libubox/jshn.sh
+
+STATUS_FILE="/var/run/wdtt/status.json"
+LOG_FILE="/var/run/wdtt/wdtt.log"
+
+case "$1" in
+	list)
+		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" } }'
+		;;
+	call)
+		method="${2:-}"
+		case "$method" in
+			status)
+				if [ -f "$STATUS_FILE" ]; then
+					cat "$STATUS_FILE"
+				else
+					echo '{"running":false,"state":"stopped","rx_bytes":0,"tx_bytes":0,"workers":0,"wg_applied":false}'
+				fi
+				;;
+			logs)
+				json_load "$(cat)"
+				json_get_var tail tail
+				tail="${tail:-100}"
+				json_init
+				json_add_array lines
+				if [ -f "$LOG_FILE" ]; then
+					tail -n "$tail" "$LOG_FILE" | while IFS= read -r line; do
+						json_add_string "" "$line"
+					done
+				fi
+				json_close_array
+				json_dump
+				;;
+			captcha)
+				json_load "$(cat)"
+				json_get_var token token
+				if [ -n "$token" ]; then
+					/usr/sbin/wdttd -captcha "$token" 2>/dev/null
+					json_init
+					json_add_string result "ok"
+					json_dump
+				else
+					json_init
+					json_add_string error "empty token"
+					json_dump
+				fi
+				;;
+		esac
+		;;
+esac

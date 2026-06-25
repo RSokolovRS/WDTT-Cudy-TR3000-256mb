@@ -1,0 +1,8 @@
+# Build artifacts
+*.apk
+*.ipk
+wdttd
+wdttd-test
+
+# Go
+wdtt-client/src/wdttd

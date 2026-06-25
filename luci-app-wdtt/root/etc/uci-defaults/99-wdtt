@@ -1,0 +1,36 @@
+#!/bin/sh
+# Register WDTT firewall zone and dnsmasq snippet dir (OpenWrt 25.x / fw4)
+
+WDEV="wg-wdtt"
+
+uci -q batch <<-EOF >/dev/null
+	set firewall.wdtt=zone
+	set firewall.wdtt.name='wdtt'
+	set firewall.wdtt.input='ACCEPT'
+	set firewall.wdtt.output='ACCEPT'
+	set firewall.wdtt.forward='ACCEPT'
+	set firewall.wdtt.masq='1'
+	set firewall.wdtt.mtu_fix='1'
+	add_list firewall.wdtt.network='wdtt'
+	commit firewall
+EOF
+
+if ! uci -q get network.wdtt >/dev/null; then
+	uci -q batch <<-EOF >/dev/null
+		set network.wdtt=interface
+		set network.wdtt.proto='none'
+		set network.wdtt.device='$WDEV'
+		commit network
+EOF
+fi
+
+# dnsmasq: подхватывает /tmp/dnsmasq.d/*.conf
+if ! uci -q get dhcp.@dnsmasq[0].confdir >/dev/null; then
+	uci -q add_list dhcp.@dnsmasq[0].confdir='/tmp/dnsmasq.d' 2>/dev/null
+	uci commit dhcp 2>/dev/null
+fi
+
+mkdir -p /tmp/dnsmasq.d /var/run/wdtt
+/etc/init.d/wdtt enable 2>/dev/null
+
+exit 0
