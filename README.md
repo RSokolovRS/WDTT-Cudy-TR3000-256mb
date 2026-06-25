@@ -21,6 +21,18 @@ sh <(wget --header="Authorization: Bearer $GITHUB_TOKEN" -O - \
 
 Требуется OpenWrt **24.10+** / **25.x** (apk), интернет, ~20 МБ свободного места.
 
+### Если apk пишет `unexpected end of file`
+
+Обычно это обрыв загрузки с зеркала OpenWrt. На роутере:
+
+```bash
+rm -rf /var/cache/apk/*
+apk update
+apk add wireguard-tools kmod-wireguard
+```
+
+Затем снова запустите установщик WDTT.
+
 ## Целевое устройство
 
 **Cudy TR3000 256MB** (и совместимые):

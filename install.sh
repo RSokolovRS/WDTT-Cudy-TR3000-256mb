@@ -12,7 +12,9 @@
 # Или скопировать скрипт на роутер:
 #   scp install.sh root@192.168.1.1:/tmp/ && ssh root@192.168.1.1 'GITHUB_TOKEN=xxx sh /tmp/install.sh'
 
-set -e
+# Не прерываем установку при ошибках apk (обрабатываем вручную)
+
+set +e
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -314,18 +316,92 @@ check_system() {
 	esac
 }
 
-install_dependencies() {
-	msg "Installing dependencies..."
-
+pkg_is_installed() {
+	local name="$1"
 	if [ "$PKG_IS_APK" -eq 1 ]; then
-		apk add wireguard-tools-wg wireguard-tools-wg-quick \
-			kmod-wireguard ca-bundle nftables kmod-nft-core \
-			ipset dnsmasq curl wget 2>/dev/null || \
-		apk add wireguard-tools kmod-wireguard ca-bundle \
-			nftables kmod-nft-core ipset dnsmasq curl wget
+		apk info -e "$name" >/dev/null 2>&1
 	else
-		opkg install wireguard-tools kmod-wireguard ca-bundle \
-			nftables kmod-nft-core ipset dnsmasq curl wget
+		opkg list-installed 2>/dev/null | grep -q "^${name} "
+	fi
+}
+
+kmod_loaded() {
+	[ -d "/sys/module/$1" ]
+}
+
+apk_install_one() {
+	local pkg="$1" attempt=0 errf="/tmp/wdtt-apk-$$.log"
+
+	pkg_is_installed "$pkg" && return 0
+
+	if [ "$PKG_IS_APK" -ne 1 ]; then
+		opkg install "$pkg" && return 0
+		return 1
+	fi
+
+	while [ "$attempt" -lt 3 ]; do
+		msg "apk add $pkg (try $((attempt + 1))/3)..."
+		if apk add "$pkg" >"$errf" 2>&1; then
+			rm -f "$errf"
+			return 0
+		fi
+		warn "$(tail -n 2 "$errf" 2>/dev/null | tr '\n' ' ')"
+		rm -f /var/cache/apk/*.apk /var/cache/apk/*.adb 2>/dev/null
+		apk update >/dev/null 2>&1
+		attempt=$((attempt + 1))
+		sleep 2
+	done
+	rm -f "$errf"
+	return 1
+}
+
+install_dependencies() {
+	local pkg failed=0 optional_failed=0
+
+	msg "Checking dependencies..."
+
+	# Критичные — без них туннель не поднимется
+	for pkg in wireguard-tools kmod-wireguard; do
+		if pkg_is_installed "$pkg" || kmod_loaded wireguard; then
+			msg "  OK: $pkg"
+		elif apk_install_one "$pkg"; then
+			msg "  installed: $pkg"
+		else
+			warn "  FAILED: $pkg (критично)"
+			failed=1
+		fi
+	done
+
+	# Опциональные — selective routing / LuCI
+	for pkg in ipset dnsmasq curl ca-bundle; do
+		if pkg_is_installed "$pkg"; then
+			msg "  OK: $pkg"
+		elif apk_install_one "$pkg"; then
+			msg "  installed: $pkg"
+		else
+			warn "  skip: $pkg (опционально, можно позже: apk add $pkg)"
+			optional_failed=1
+		fi
+	done
+
+	# nftables обычно уже в OpenWrt 25 + fw4
+	if ! command -v nft >/dev/null 2>&1; then
+		apk_install_one nftables || warn "  skip: nftables"
+	fi
+
+	modprobe wireguard 2>/dev/null
+
+	if [ "$failed" -eq 1 ]; then
+		warn ""
+		warn "WireGuard не установился. Попробуйте вручную:"
+		warn "  rm -rf /var/cache/apk/* && apk update"
+		warn "  apk add wireguard-tools kmod-wireguard"
+		warn "Продолжаем установку WDTT..."
+	fi
+
+	if [ "$optional_failed" -eq 1 ]; then
+		warn "ipset/dnsmasq не установились — selective routing может не работать."
+		warn "Полный туннель (routing_mode=full) будет работать."
 	fi
 }
 
@@ -377,14 +453,15 @@ main() {
 
 	pkg_list_update || { err "Package list update failed"; exit 1; }
 
-	install_dependencies
-
+	# Сначала ставим WDTT (бинарник + LuCI), потом зависимости
 	if install_from_release; then
 		msg "Installed from release packages"
 	else
 		warn "Release .apk/.ipk not found, installing from source..."
-		install_from_source
+		install_from_source || exit 1
 	fi
+
+	install_dependencies
 
 	post_install
 	rm -rf "$DOWNLOAD_DIR"
