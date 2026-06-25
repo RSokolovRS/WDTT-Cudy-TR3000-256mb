@@ -15,12 +15,13 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.0"
+WDTT_INSTALL_VERSION="3.1"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+RELEASE_BIN_URL="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/releases/download/v1.0.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 COUNT=3
 
@@ -221,6 +222,33 @@ install_from_release() {
 	[ "$installed" -eq 1 ]
 }
 
+install_file() {
+	local url="$1" dest="$2" label="$3"
+
+	if download_file "$url" "$dest"; then
+		return 0
+	fi
+	err "FAILED: $label"
+	err "  URL: $url"
+	return 1
+}
+
+install_bin() {
+	local dest="$1" failed=0
+
+	if download_file "$RELEASE_BIN_URL" "$dest"; then
+		return 0
+	fi
+
+	if find_release_binary "arm64" "$DOWNLOAD_DIR/binurl.txt"; then
+		if download_file "$(cat "$DOWNLOAD_DIR/binurl.txt")" "$dest"; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
 find_release_binary() {
 	local goarch="$1" out="$2"
 
@@ -228,13 +256,12 @@ find_release_binary() {
 		return 1
 	fi
 
-	# Ищем browser_download_url для wdttd-linux-ARCH
 	grep -o "https://[^\"]*wdttd-linux-${goarch}[^\"]*" "$DOWNLOAD_DIR/release.json" 2>/dev/null | head -n1 > "$out"
 	[ -s "$out" ]
 }
 
 install_from_source() {
-	local arch goarch bin_url="" LUCI_VIEW
+	local arch goarch LUCI_VIEW
 
 	arch="$(detect_arch)"
 	case "$arch" in
@@ -247,7 +274,7 @@ install_from_source() {
 			;;
 	esac
 
-	msg "Installing from repository files..."
+	msg "Installing WDTT from GitHub (arch=${goarch})..."
 
 	mkdir -p /usr/sbin /usr/libexec/wdtt /var/run/wdtt \
 		/etc/init.d /etc/config /etc/hotplug.d/iface \
@@ -257,48 +284,70 @@ install_from_source() {
 	LUCI_VIEW="/www/luci-static/resources/view/wdtt"
 	mkdir -p "$LUCI_VIEW"
 
-	if find_release_binary "$goarch" "$DOWNLOAD_DIR/binurl.txt"; then
-		bin_url="$(cat "$DOWNLOAD_DIR/binurl.txt")"
-	fi
-
-	if [ -n "$bin_url" ] && download_file "$bin_url" "$DOWNLOAD_DIR/wdttd"; then
-		install -m 0755 "$DOWNLOAD_DIR/wdttd" /usr/sbin/wdttd
-	else
-		err "Binary wdttd-linux-${goarch} not found in releases."
-		err "Создайте Release на GitHub (тег v1.0.0) с asset wdttd-linux-${goarch}"
-		err "Или проверьте GITHUB_TOKEN для приватного репозитория."
+	msg "Step 1/3: wdttd binary..."
+	if ! install_bin "$DOWNLOAD_DIR/wdttd"; then
+		err "Cannot download wdttd-linux-${goarch}"
+		err "URL: $RELEASE_BIN_URL"
 		exit 1
 	fi
+	cp -f "$DOWNLOAD_DIR/wdttd" /usr/sbin/wdttd
+	chmod 0755 /usr/sbin/wdttd
+	msg "  OK: /usr/sbin/wdttd ($(wc -c < /usr/sbin/wdttd) bytes)"
 
-	download_file "$RAW_URL/wdtt-client/files/wdtt-routing" /usr/libexec/wdtt/routing
+	msg "Step 2/3: scripts and config..."
+	install_file "$RAW_URL/wdtt-client/files/wdtt-routing" /usr/libexec/wdtt/routing "routing" || exit 1
 	chmod 0755 /usr/libexec/wdtt/routing
 
-	download_file "$RAW_URL/luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt
+	install_file "$RAW_URL/luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt "init.d" || exit 1
 	chmod 0755 /etc/init.d/wdtt
 
-	download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt
-	download_file "$RAW_URL/luci-app-wdtt/root/etc/firewall.wdtt" /etc/firewall.wdtt
+	install_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt "config" || exit 1
+	install_file "$RAW_URL/luci-app-wdtt/root/etc/firewall.wdtt" /etc/firewall.wdtt "firewall" || exit 1
 	chmod 0755 /etc/firewall.wdtt
 
-	download_file "$RAW_URL/luci-app-wdtt/root/etc/uci-defaults/99-wdtt" /etc/uci-defaults/99-wdtt
+	install_file "$RAW_URL/luci-app-wdtt/root/etc/uci-defaults/99-wdtt" /etc/uci-defaults/99-wdtt "uci-defaults" || exit 1
 	chmod 0755 /etc/uci-defaults/99-wdtt
 
-	download_file "$RAW_URL/luci-app-wdtt/root/etc/hotplug.d/iface/99-wdtt" /etc/hotplug.d/iface/99-wdtt
+	install_file "$RAW_URL/luci-app-wdtt/root/etc/hotplug.d/iface/99-wdtt" /etc/hotplug.d/iface/99-wdtt "hotplug" || exit 1
 	chmod 0755 /etc/hotplug.d/iface/99-wdtt
 
-	download_file "$RAW_URL/luci-app-wdtt/root/usr/libexec/rpcd/wdtt" /usr/libexec/rpcd/wdtt
+	install_file "$RAW_URL/luci-app-wdtt/root/usr/libexec/rpcd/wdtt" /usr/libexec/rpcd/wdtt "rpcd" || exit 1
 	chmod 0755 /usr/libexec/rpcd/wdtt
 
-	download_file "$RAW_URL/luci-app-wdtt/root/usr/share/luci/menu.d/luci-app-wdtt.json" \
-		/usr/share/luci/menu.d/luci-app-wdtt.json
-
-	download_file "$RAW_URL/luci-app-wdtt/root/usr/share/rpcd/acl.d/luci-app-wdtt.json" \
-		/usr/share/rpcd/acl.d/luci-app-wdtt.json
-
-	download_file "$RAW_URL/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js" \
-		"$LUCI_VIEW/overview.js"
+	msg "Step 3/3: LuCI..."
+	install_file "$RAW_URL/luci-app-wdtt/root/usr/share/luci/menu.d/luci-app-wdtt.json" \
+		/usr/share/luci/menu.d/luci-app-wdtt.json "menu" || exit 1
+	install_file "$RAW_URL/luci-app-wdtt/root/usr/share/rpcd/acl.d/luci-app-wdtt.json" \
+		/usr/share/rpcd/acl.d/luci-app-wdtt.json "acl" || exit 1
+	install_file "$RAW_URL/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js" \
+		"$LUCI_VIEW/overview.js" "LuCI view" || exit 1
 
 	mkdir -p /tmp/dnsmasq.d
+	msg "WDTT files installed."
+}
+
+verify_install() {
+	local ok=1
+
+	if [ -x /usr/sbin/wdttd ]; then
+		msg "  [OK] /usr/sbin/wdttd"
+	else
+		err "  [!!] /usr/sbin/wdttd missing"
+		ok=0
+	fi
+	if [ -x /etc/init.d/wdtt ]; then
+		msg "  [OK] /etc/init.d/wdtt"
+	else
+		err "  [!!] /etc/init.d/wdtt missing"
+		ok=0
+	fi
+	if [ -f /www/luci-static/resources/view/wdtt/overview.js ]; then
+		msg "  [OK] LuCI view"
+	else
+		warn "  [??] LuCI view missing — очистите кэш браузера"
+	fi
+
+	return "$ok"
 }
 
 check_system() {
@@ -470,13 +519,9 @@ main() {
 		msg "Installing WDTT..."
 	fi
 
-	# Сначала WDTT с GitHub (без apk)
-	if install_from_release; then
-		msg "Installed from release packages"
-	else
-		warn "Release .apk not found, installing from source..."
-		install_from_source || exit 1
-	fi
+	# Сразу ставим из GitHub (release .apk у нас нет — только бинарник)
+	warn "Installing from GitHub release..."
+	install_from_source || exit 1
 
 	# Зависимости через apk — только если зеркала доступны
 	fix_broken_wget
@@ -490,6 +535,8 @@ main() {
 	fi
 
 	post_install
+	verify_install
+
 	rm -rf "$DOWNLOAD_DIR"
 }
 
