@@ -19,31 +19,51 @@ ln -sf /bin/uclient-fetch /usr/bin/wget
 apk del wget-nossl
 ```
 
-Установка:
+Установка (сначала зеркало jsDelivr — если `raw.githubusercontent.com` недоступен):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
 sh /tmp/wdtt-install.sh
+```
+
+Если jsDelivr доступен, но GitHub releases — нет, скопируйте бинарник с ПК:
+
+```bash
+# на ПК: скачайте wdttd-linux-arm64 с Releases
+scp wdttd-linux-arm64 root@192.168.1.1:/tmp/wdttd
+ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 ```
 
 ### Вариант B — uclient-fetch
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
-### Вариант C — bootstrap (сам выберет uclient-fetch / wget / curl)
+### Вариант C — bootstrap (зеркала + fallback)
 
 ```bash
-wget -O /tmp/wdtt-bootstrap.sh \
-  https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/bootstrap.sh
+uclient-fetch -q -O /tmp/wdtt-bootstrap.sh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/bootstrap.sh
 sh /tmp/wdtt-bootstrap.sh
 ```
 
-Должно появиться `WDTT installer v3.1` и шаги `Step 1/3`, `Step 2/3`, `Step 3/3`.
+Должно появиться `WDTT installer v3.2` и шаги `Step 1/3`, `Step 2/3`, `Step 3/3`.
+
+### Вариант D — установка с компьютера (GitHub заблокирован на роутере)
+
+На ПК (Linux/macOS), роутер в локальной сети:
+
+```bash
+git clone https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb.git
+cd WDTT-Cudy-TR3000-256mb
+sh scripts/install-from-pc.sh root@192.168.1.1
+```
+
+Скрипт скачает `install.sh` и бинарник на ПК, скопирует на роутер по `scp` и запустит установку.
 
 > **Не ставьте** `apk add wget` — на OpenWrt это часто `wget-nossl` без SSL и снова сломает `apk`.
 

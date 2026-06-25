@@ -15,15 +15,17 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.1"
+WDTT_INSTALL_VERSION="3.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
+JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/releases/download/v1.0.0/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v1.0.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 COUNT=3
+HTTP_TIMEOUT=30
 
 # Токен: только если задан явно (приватный репо). Файл — опционально.
 if [ -z "$GITHUB_TOKEN" ] && [ -f /etc/wdtt/github_token ]; then
@@ -67,25 +69,46 @@ http_get() {
 
 	if [ -x /bin/uclient-fetch ]; then
 		if [ -n "$token" ]; then
-			uclient-fetch -q -O "$dest" --header="Authorization: Bearer $token" "$url" 2>/dev/null \
+			uclient-fetch -t "$HTTP_TIMEOUT" -q -O "$dest" \
+				--header="Authorization: Bearer $token" "$url" 2>/dev/null \
 				&& [ -s "$dest" ] && return 0
 		fi
-		uclient-fetch -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+		uclient-fetch -t "$HTTP_TIMEOUT" -q -O "$dest" "$url" 2>/dev/null \
+			&& [ -s "$dest" ] && return 0
 	fi
 
 	if command -v curl >/dev/null 2>&1; then
 		if [ -n "$token" ]; then
-			curl -fsSL -H "Authorization: Bearer $token" -o "$dest" "$url" 2>/dev/null \
+			curl -fsSL --connect-timeout "$HTTP_TIMEOUT" -m 120 \
+				-H "Authorization: Bearer $token" -o "$dest" "$url" 2>/dev/null \
 				&& [ -s "$dest" ] && return 0
 		fi
-		curl -fsSL -L -o "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+		curl -fsSL --connect-timeout "$HTTP_TIMEOUT" -m 120 -L -o "$dest" "$url" 2>/dev/null \
+			&& [ -s "$dest" ] && return 0
 	fi
 
 	if [ -n "$token" ]; then
-		wget -q -O "$dest" --header="Authorization: Bearer $token" "$url" 2>/dev/null \
+		wget -T "$HTTP_TIMEOUT" -q -O "$dest" --header="Authorization: Bearer $token" "$url" 2>/dev/null \
 			&& [ -s "$dest" ] && return 0
 	fi
-	wget -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+	wget -T "$HTTP_TIMEOUT" -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+	return 1
+}
+
+# Скачать файл из репозитория через зеркала (если raw.githubusercontent.com недоступен)
+download_repo_file() {
+	local relpath="$1" dest="$2" label="$3"
+	local base url
+
+	for base in "$JSDELIVR_URL" "$RAW_URL"; do
+		url="${base}/${relpath}"
+		msg "  try: $url"
+		if download_file "$url" "$dest"; then
+			return 0
+		fi
+	done
+
+	err "FAILED: $label (все зеркала недоступны)"
 	return 1
 }
 
@@ -129,7 +152,13 @@ github_api_get() {
 }
 
 check_github_access() {
-	# Проверяем доступ к репозиторию (raw файлы)
+	# Проверяем доступ (jsDelivr → raw GitHub)
+	if download_file "$JSDELIVR_URL/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
+		rm -f "$DOWNLOAD_DIR/probe.sh"
+		msg "CDN: jsDelivr OK"
+		return 0
+	fi
+
 	if download_file "$RAW_URL/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
 		rm -f "$DOWNLOAD_DIR/probe.sh"
 		msg "GitHub: публичный доступ OK"
@@ -137,9 +166,9 @@ check_github_access() {
 	fi
 
 	if [ -z "$GITHUB_TOKEN" ]; then
-		err "Не удаётся скачать файлы из GitHub."
-		err "Если репозиторий приватный — задайте GITHUB_TOKEN."
-		err "Или: scp install.sh root@ROUTER:/tmp/ && sh /tmp/install.sh"
+		err "Не удаётся скачать файлы из GitHub / CDN."
+		err "Установите с компьютера: sh scripts/install-from-pc.sh root@192.168.1.1"
+		err "Или: scp install.sh root@ROUTER:/tmp/ && WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/install.sh"
 		exit 1
 	fi
 
@@ -233,12 +262,32 @@ install_file() {
 	return 1
 }
 
-install_bin() {
-	local dest="$1" failed=0
+install_repo_file() {
+	local relpath="$1" dest="$2" label="$3"
+	download_repo_file "$relpath" "$dest" "$label"
+}
 
-	if download_file "$RELEASE_BIN_URL" "$dest"; then
+install_bin() {
+	local dest="$1" url
+
+	# Локальный бинарник (скопирован с ПК): WDTT_LOCAL_BIN=/tmp/wdttd sh install.sh
+	if [ -n "$WDTT_LOCAL_BIN" ] && [ -f "$WDTT_LOCAL_BIN" ]; then
+		msg "  using local: $WDTT_LOCAL_BIN"
+		cp -f "$WDTT_LOCAL_BIN" "$dest"
+		chmod 0755 "$dest"
 		return 0
 	fi
+
+	for url in \
+		"$RELEASE_BIN_URL" \
+		"https://ghproxy.net/$RELEASE_BIN_URL" \
+		"https://mirror.ghproxy.com/$RELEASE_BIN_URL"
+	do
+		msg "  try bin: $url"
+		if download_file "$url" "$dest"; then
+			return 0
+		fi
+	done
 
 	if find_release_binary "arm64" "$DOWNLOAD_DIR/binurl.txt"; then
 		if download_file "$(cat "$DOWNLOAD_DIR/binurl.txt")" "$dest"; then
@@ -287,7 +336,9 @@ install_from_source() {
 	msg "Step 1/3: wdttd binary..."
 	if ! install_bin "$DOWNLOAD_DIR/wdttd"; then
 		err "Cannot download wdttd-linux-${goarch}"
-		err "URL: $RELEASE_BIN_URL"
+		err "GitHub недоступен с роутера? Скопируйте с ПК:"
+		err "  scp wdttd-linux-arm64 root@ROUTER:/tmp/wdttd"
+		err "  WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh"
 		exit 1
 	fi
 	cp -f "$DOWNLOAD_DIR/wdttd" /usr/sbin/wdttd
@@ -295,31 +346,31 @@ install_from_source() {
 	msg "  OK: /usr/sbin/wdttd ($(wc -c < /usr/sbin/wdttd) bytes)"
 
 	msg "Step 2/3: scripts and config..."
-	install_file "$RAW_URL/wdtt-client/files/wdtt-routing" /usr/libexec/wdtt/routing "routing" || exit 1
+	install_repo_file "wdtt-client/files/wdtt-routing" /usr/libexec/wdtt/routing "routing" || exit 1
 	chmod 0755 /usr/libexec/wdtt/routing
 
-	install_file "$RAW_URL/luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt "init.d" || exit 1
+	install_repo_file "luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt "init.d" || exit 1
 	chmod 0755 /etc/init.d/wdtt
 
-	install_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt "config" || exit 1
-	install_file "$RAW_URL/luci-app-wdtt/root/etc/firewall.wdtt" /etc/firewall.wdtt "firewall" || exit 1
+	install_repo_file "luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt "config" || exit 1
+	install_repo_file "luci-app-wdtt/root/etc/firewall.wdtt" /etc/firewall.wdtt "firewall" || exit 1
 	chmod 0755 /etc/firewall.wdtt
 
-	install_file "$RAW_URL/luci-app-wdtt/root/etc/uci-defaults/99-wdtt" /etc/uci-defaults/99-wdtt "uci-defaults" || exit 1
+	install_repo_file "luci-app-wdtt/root/etc/uci-defaults/99-wdtt" /etc/uci-defaults/99-wdtt "uci-defaults" || exit 1
 	chmod 0755 /etc/uci-defaults/99-wdtt
 
-	install_file "$RAW_URL/luci-app-wdtt/root/etc/hotplug.d/iface/99-wdtt" /etc/hotplug.d/iface/99-wdtt "hotplug" || exit 1
+	install_repo_file "luci-app-wdtt/root/etc/hotplug.d/iface/99-wdtt" /etc/hotplug.d/iface/99-wdtt "hotplug" || exit 1
 	chmod 0755 /etc/hotplug.d/iface/99-wdtt
 
-	install_file "$RAW_URL/luci-app-wdtt/root/usr/libexec/rpcd/wdtt" /usr/libexec/rpcd/wdtt "rpcd" || exit 1
+	install_repo_file "luci-app-wdtt/root/usr/libexec/rpcd/wdtt" /usr/libexec/rpcd/wdtt "rpcd" || exit 1
 	chmod 0755 /usr/libexec/rpcd/wdtt
 
 	msg "Step 3/3: LuCI..."
-	install_file "$RAW_URL/luci-app-wdtt/root/usr/share/luci/menu.d/luci-app-wdtt.json" \
+	install_repo_file "luci-app-wdtt/root/usr/share/luci/menu.d/luci-app-wdtt.json" \
 		/usr/share/luci/menu.d/luci-app-wdtt.json "menu" || exit 1
-	install_file "$RAW_URL/luci-app-wdtt/root/usr/share/rpcd/acl.d/luci-app-wdtt.json" \
+	install_repo_file "luci-app-wdtt/root/usr/share/rpcd/acl.d/luci-app-wdtt.json" \
 		/usr/share/rpcd/acl.d/luci-app-wdtt.json "acl" || exit 1
-	install_file "$RAW_URL/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js" \
+	install_repo_file "luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js" \
 		"$LUCI_VIEW/overview.js" "LuCI view" || exit 1
 
 	mkdir -p /tmp/dnsmasq.d

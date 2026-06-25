@@ -1,47 +1,32 @@
 #!/bin/sh
-# Bootstrap: скачивает install.sh в /tmp и запускает
-INSTALL_URL="https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh"
+# Bootstrap с зеркалами (если raw.githubusercontent.com недоступен)
 OUT="/tmp/wdtt-install.sh"
 
-wget_is_ssl_ok() {
-	local target
-	target="$(readlink -f /usr/bin/wget 2>/dev/null || echo "")"
-	case "$target" in
-		*uclient-fetch*) return 0 ;;
-		*wget-ssl*) return 0 ;;
-		*wget-nossl*|*nossl*) return 1 ;;
-	esac
-	# Проверка HTTPS тестом
-	wget -q -O /dev/null "https://github.com" 2>/dev/null
-}
-
-download_installer() {
+try_download() {
+	url="$1"
+	echo "Try: $url"
 	if [ -x /bin/uclient-fetch ]; then
-		uclient-fetch -q -O "$OUT" "$INSTALL_URL" && [ -s "$OUT" ] && return 0
+		uclient-fetch -t 30 -q -O "$OUT" "$url" && [ -s "$OUT" ] && return 0
 	fi
-
-	if command -v wget >/dev/null 2>&1 && wget_is_ssl_ok; then
-		wget -q -O "$OUT" "$INSTALL_URL" && [ -s "$OUT" ] && return 0
-	fi
-
-	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL -o "$OUT" "$INSTALL_URL" && [ -s "$OUT" ] && return 0
-	fi
-
+	wget -T 30 -q -O "$OUT" "$url" 2>/dev/null && [ -s "$OUT" ] && return 0
+	curl -fsSL --connect-timeout 30 -o "$OUT" "$url" 2>/dev/null && [ -s "$OUT" ] && return 0
 	return 1
 }
 
-if ! download_installer; then
-	echo "ERROR: cannot download install.sh"
-	echo ""
-	echo "Если wget-nossl ломает HTTPS, выполните:"
-	echo "  ln -sf /bin/uclient-fetch /usr/bin/wget"
-	echo "  apk del wget-nossl"
-	echo ""
-	echo "Затем:"
-	echo "  wget -O $OUT $INSTALL_URL"
-	echo "  sh $OUT"
-	exit 1
-fi
+for url in \
+	"https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh" \
+	"https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh"
+do
+	try_download "$url" && sh "$OUT" && exit 0
+done
 
-sh "$OUT"
+echo "ERROR: GitHub CDN недоступен с роутера."
+echo ""
+echo "Установите с компьютера:"
+echo "  git clone https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb.git"
+echo "  cd WDTT-Cudy-TR3000-256mb"
+echo "  scp install.sh root@192.168.1.1:/tmp/"
+echo "  # скачайте wdttd-linux-arm64 с Releases на ПК"
+echo "  scp wdttd-linux-arm64 root@192.168.1.1:/tmp/wdttd"
+echo "  ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/install.sh'"
+exit 1
