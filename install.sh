@@ -13,8 +13,9 @@
 #   scp install.sh root@192.168.1.1:/tmp/ && ssh root@192.168.1.1 'GITHUB_TOKEN=xxx sh /tmp/install.sh'
 
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
-
 set +e
+
+WDTT_INSTALL_VERSION="3.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -35,59 +36,71 @@ msg()  { printf "\033[32;1m%s\033[0m\n" "$1"; }
 warn() { printf "\033[33;1m%s\033[0m\n" "$1"; }
 err()  { printf "\033[31;1m%s\033[0m\n" "$1"; }
 
-# Внутренний fetch: token пустой = публичный доступ
-_github_fetch() {
-	local url="$1" out="$2" token="$3"
+# wget-nossl ломает apk: зеркала OpenWrt только HTTPS
+fix_broken_wget() {
+	local target
 
-	if command -v curl >/dev/null 2>&1; then
-		if [ -n "$token" ]; then
-			curl -fsSL \
-				-H "Authorization: Bearer $token" \
-				-H "Accept: application/vnd.github+json" \
-				-o "$out" "$url" 2>/dev/null
-		else
-			curl -fsSL -o "$out" "$url" 2>/dev/null
-		fi
-	else
-		if [ -n "$token" ]; then
-			wget -q -O "$out" \
-				--header="Authorization: Bearer $token" \
-				--header="Accept: application/vnd.github+json" \
-				"$url" 2>/dev/null
-		else
-			wget -q -O "$out" "$url" 2>/dev/null
+	if apk info -e wget-nossl >/dev/null 2>&1; then
+		warn "Удаляем wget-nossl (ломает apk HTTPS)..."
+		apk del wget-nossl >/dev/null 2>&1
+	fi
+
+	if [ -x /bin/uclient-fetch ]; then
+		target="$(readlink -f /usr/bin/wget 2>/dev/null || echo "")"
+		case "$target" in
+			*wget-nossl*|*nossl*)
+				warn "Восстанавливаем wget → uclient-fetch"
+				ln -sf /bin/uclient-fetch /usr/bin/wget
+				;;
+		esac
+		# apk на OpenWrt использует wget для загрузки пакетов
+		if [ ! -x /usr/bin/wget ] || [ "$target" = "" ]; then
+			ln -sf /bin/uclient-fetch /usr/bin/wget
 		fi
 	fi
 }
 
-# Скачивание URL в файл (сначала без токена — для публичного репо)
+# Универсальная загрузка: uclient-fetch (OpenWrt) → curl → wget
+http_get() {
+	local url="$1" dest="$2" token="$3"
+
+	if [ -x /bin/uclient-fetch ]; then
+		if [ -n "$token" ]; then
+			uclient-fetch -q -O "$dest" --header="Authorization: Bearer $token" "$url" 2>/dev/null \
+				&& [ -s "$dest" ] && return 0
+		fi
+		uclient-fetch -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+	fi
+
+	if command -v curl >/dev/null 2>&1; then
+		if [ -n "$token" ]; then
+			curl -fsSL -H "Authorization: Bearer $token" -o "$dest" "$url" 2>/dev/null \
+				&& [ -s "$dest" ] && return 0
+		fi
+		curl -fsSL -L -o "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+	fi
+
+	if [ -n "$token" ]; then
+		wget -q -O "$dest" --header="Authorization: Bearer $token" "$url" 2>/dev/null \
+			&& [ -s "$dest" ] && return 0
+	fi
+	wget -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+	return 1
+}
+
+_github_fetch() {
+	local url="$1" out="$2" token="$3"
+	http_get "$url" "$out" "$token"
+}
+
+# Скачивание URL в файл
 download_file() {
-	local url="$1" dest="$2"
-	local attempt=0
+	local url="$1" dest="$2" attempt=0
 
 	while [ "$attempt" -lt "$COUNT" ]; do
 		msg "Download $(basename "$dest") (attempt $((attempt + 1)))..."
-
-		# 1) публичный доступ
-		if command -v curl >/dev/null 2>&1; then
-			curl -fsSL -L -o "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
-		fi
-		wget -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
-
-		# 2) с токеном (приватный репо)
-		if [ -n "$GITHUB_TOKEN" ]; then
-			if command -v curl >/dev/null 2>&1; then
-				curl -fsSL \
-					-H "Authorization: Bearer $GITHUB_TOKEN" \
-					-H "Accept: application/octet-stream" \
-					-L -o "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
-			fi
-			wget -q -O "$dest" \
-				--header="Authorization: Bearer $GITHUB_TOKEN" \
-				--header="Accept: application/octet-stream" \
-				"$url" 2>/dev/null && [ -s "$dest" ] && return 0
-		fi
-
+		if http_get "$url" "$dest" ""; then return 0; fi
+		if [ -n "$GITHUB_TOKEN" ] && http_get "$url" "$dest" "$GITHUB_TOKEN"; then return 0; fi
 		rm -f "$dest"
 		attempt=$((attempt + 1))
 	done
@@ -372,8 +385,8 @@ install_dependencies() {
 		fi
 	done
 
-	# Опциональные — selective routing / LuCI
-	for pkg in ipset dnsmasq curl ca-bundle; do
+	# Опциональные — selective routing (НЕ ставим curl/wget — ломают apk!)
+	for pkg in ipset dnsmasq ca-bundle; do
 		if pkg_is_installed "$pkg"; then
 			msg "  OK: $pkg"
 		elif apk_install_one "$pkg"; then
@@ -393,9 +406,10 @@ install_dependencies() {
 
 	if [ "$failed" -eq 1 ]; then
 		warn ""
-		warn "WireGuard не установился. Попробуйте вручную:"
-		warn "  rm -rf /var/cache/apk/* && apk update"
-		warn "  apk add wireguard-tools kmod-wireguard"
+		warn "WireGuard не установился. Сначала почините apk:"
+		warn "  ln -sf /bin/uclient-fetch /usr/bin/wget"
+		warn "  apk del wget-nossl"
+		warn "  apk update && apk add wireguard-tools kmod-wireguard"
 		warn "Продолжаем установку WDTT..."
 	fi
 
@@ -439,8 +453,13 @@ main() {
 		exit 1
 	fi
 
+	msg "WDTT installer v${WDTT_INSTALL_VERSION}"
+
 	rm -rf "$DOWNLOAD_DIR"
 	mkdir -p "$DOWNLOAD_DIR"
+
+	# КРИТИЧНО: починить wget до любых apk-операций
+	fix_broken_wget
 
 	check_system
 	check_github_access
@@ -451,17 +470,24 @@ main() {
 		msg "Installing WDTT..."
 	fi
 
-	pkg_list_update || { err "Package list update failed"; exit 1; }
-
-	# Сначала ставим WDTT (бинарник + LuCI), потом зависимости
+	# Сначала WDTT с GitHub (без apk)
 	if install_from_release; then
 		msg "Installed from release packages"
 	else
-		warn "Release .apk/.ipk not found, installing from source..."
+		warn "Release .apk not found, installing from source..."
 		install_from_source || exit 1
 	fi
 
-	install_dependencies
+	# Зависимости через apk — только если зеркала доступны
+	fix_broken_wget
+	if apk update >/dev/null 2>&1; then
+		install_dependencies
+	else
+		warn "apk update failed — WDTT установлен, но WireGuard нужно поставить вручную:"
+		warn "  ln -sf /bin/uclient-fetch /usr/bin/wget"
+		warn "  apk del wget-nossl && apk update"
+		warn "  apk add wireguard-tools kmod-wireguard"
+	fi
 
 	post_install
 	rm -rf "$DOWNLOAD_DIR"
