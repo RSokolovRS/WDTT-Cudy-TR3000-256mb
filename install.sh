@@ -21,9 +21,9 @@ RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 COUNT=3
 
-# Токен: переменная окружения или файл (chmod 600)
+# Токен: только если задан явно (приватный репо). Файл — опционально.
 if [ -z "$GITHUB_TOKEN" ] && [ -f /etc/wdtt/github_token ]; then
-	GITHUB_TOKEN="$(cat /etc/wdtt/github_token)"
+	GITHUB_TOKEN="$(tr -d '[:space:]' < /etc/wdtt/github_token)"
 fi
 
 PKG_IS_APK=0
@@ -33,46 +33,57 @@ msg()  { printf "\033[32;1m%s\033[0m\n" "$1"; }
 warn() { printf "\033[33;1m%s\033[0m\n" "$1"; }
 err()  { printf "\033[31;1m%s\033[0m\n" "$1"; }
 
-github_headers() {
-	if [ -n "$GITHUB_TOKEN" ]; then
-		printf '%s\n' "Authorization: Bearer $GITHUB_TOKEN"
+# Внутренний fetch: token пустой = публичный доступ
+_github_fetch() {
+	local url="$1" out="$2" token="$3"
+
+	if command -v curl >/dev/null 2>&1; then
+		if [ -n "$token" ]; then
+			curl -fsSL \
+				-H "Authorization: Bearer $token" \
+				-H "Accept: application/vnd.github+json" \
+				-o "$out" "$url" 2>/dev/null
+		else
+			curl -fsSL -o "$out" "$url" 2>/dev/null
+		fi
+	else
+		if [ -n "$token" ]; then
+			wget -q -O "$out" \
+				--header="Authorization: Bearer $token" \
+				--header="Accept: application/vnd.github+json" \
+				"$url" 2>/dev/null
+		else
+			wget -q -O "$out" "$url" 2>/dev/null
+		fi
 	fi
 }
 
-# Скачивание с поддержкой приватного GitHub
+# Скачивание URL в файл (сначала без токена — для публичного репо)
 download_file() {
 	local url="$1" dest="$2"
-	local attempt=0 hdr
+	local attempt=0
 
 	while [ "$attempt" -lt "$COUNT" ]; do
 		msg "Download $(basename "$dest") (attempt $((attempt + 1)))..."
 
+		# 1) публичный доступ
 		if command -v curl >/dev/null 2>&1; then
-			if [ -n "$GITHUB_TOKEN" ]; then
-				if curl -fsSL \
+			curl -fsSL -L -o "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+		fi
+		wget -q -O "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
+
+		# 2) с токеном (приватный репо)
+		if [ -n "$GITHUB_TOKEN" ]; then
+			if command -v curl >/dev/null 2>&1; then
+				curl -fsSL \
 					-H "Authorization: Bearer $GITHUB_TOKEN" \
 					-H "Accept: application/octet-stream" \
-					-L -o "$dest" "$url" 2>/dev/null; then
-					[ -s "$dest" ] && return 0
-				fi
-			else
-				if curl -fsSL -L -o "$dest" "$url" 2>/dev/null; then
-					[ -s "$dest" ] && return 0
-				fi
+					-L -o "$dest" "$url" 2>/dev/null && [ -s "$dest" ] && return 0
 			fi
-		fi
-
-		if [ -n "$GITHUB_TOKEN" ]; then
-			if wget -q -O "$dest" \
+			wget -q -O "$dest" \
 				--header="Authorization: Bearer $GITHUB_TOKEN" \
 				--header="Accept: application/octet-stream" \
-				"$url" 2>/dev/null; then
-				[ -s "$dest" ] && return 0
-			fi
-		else
-			if wget -q -O "$dest" "$url" 2>/dev/null; then
-				[ -s "$dest" ] && return 0
-			fi
+				"$url" 2>/dev/null && [ -s "$dest" ] && return 0
 		fi
 
 		rm -f "$dest"
@@ -84,50 +95,39 @@ download_file() {
 github_api_get() {
 	local url="$1" out="$2"
 
-	if command -v curl >/dev/null 2>&1; then
-		if [ -n "$GITHUB_TOKEN" ]; then
-			curl -fsSL \
-				-H "Authorization: Bearer $GITHUB_TOKEN" \
-				-H "Accept: application/vnd.github+json" \
-				-o "$out" "$url"
-		else
-			curl -fsSL -o "$out" "$url"
-		fi
-	else
-		if [ -n "$GITHUB_TOKEN" ]; then
-			wget -q -O "$out" \
-				--header="Authorization: Bearer $GITHUB_TOKEN" \
-				--header="Accept: application/vnd.github+json" \
-				"$url"
-		else
-			wget -q -O "$out" "$url"
-		fi
+	# Сначала публичный API (репозиторий открытый)
+	if _github_fetch "$url" "$out" ""; then
+		return 0
 	fi
+
+	# Потом с токеном
+	if [ -n "$GITHUB_TOKEN" ]; then
+		if _github_fetch "$url" "$out" "$GITHUB_TOKEN"; then
+			return 0
+		fi
+		warn "GITHUB_TOKEN невалиден — игнорируем. Удалите: rm -f /etc/wdtt/github_token"
+		GITHUB_TOKEN=""
+	fi
+
+	return 1
 }
 
 check_github_access() {
-	local probe="$DOWNLOAD_DIR/probe.txt"
-
-	if github_api_get "$RELEASE_API" "$DOWNLOAD_DIR/release_probe.json" 2>/dev/null; then
+	# Проверяем доступ к репозиторию (raw файлы)
+	if download_file "$RAW_URL/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
+		rm -f "$DOWNLOAD_DIR/probe.sh"
+		msg "GitHub: публичный доступ OK"
 		return 0
 	fi
 
 	if [ -z "$GITHUB_TOKEN" ]; then
-		err "Репозиторий приватный — нужен GITHUB_TOKEN."
-		err ""
-		err "1. GitHub → Settings → Developer settings → Fine-grained tokens"
-		err "   Права: Repository access → WDTT-Cudy-TR3000-256mb, Contents: Read"
-		err ""
-		err "2. На роутере:"
-		err "   export GITHUB_TOKEN='github_pat_...'"
-		err "   sh <(wget --header=\"Authorization: Bearer \$GITHUB_TOKEN\" -O - \\"
-		err "     https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh)"
-		err ""
-		err "Или: scp install.sh root@ROUTER:/tmp/ && GITHUB_TOKEN=xxx sh /tmp/install.sh"
+		err "Не удаётся скачать файлы из GitHub."
+		err "Если репозиторий приватный — задайте GITHUB_TOKEN."
+		err "Или: scp install.sh root@ROUTER:/tmp/ && sh /tmp/install.sh"
 		exit 1
 	fi
 
-	err "GitHub API недоступен. Проверьте GITHUB_TOKEN и интернет."
+	err "GitHub недоступен. Проверьте GITHUB_TOKEN и интернет."
 	exit 1
 }
 
@@ -312,10 +312,6 @@ check_system() {
 		aarch64) msg "Architecture: aarch64 (Cudy TR3000 OK)" ;;
 		*)       warn "Architecture: $(detect_arch) — primary target is aarch64 (TR3000)" ;;
 	esac
-
-	if [ -n "$GITHUB_TOKEN" ]; then
-		msg "GitHub token: detected (private repo OK)"
-	fi
 }
 
 install_dependencies() {
