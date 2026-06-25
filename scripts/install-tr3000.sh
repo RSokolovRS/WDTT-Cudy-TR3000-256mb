@@ -1,32 +1,20 @@
 #!/bin/sh
-# Обёртка — перенаправляет на основной install.sh
-exec sh <(wget -O - https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh)
+# Установка WDTT — приватный репозиторий
+# Запускайте с компьютера, передавая токен на роутер по SSH
 
-set -e
+ROUTER="${1:-root@192.168.1.1}"
 
-echo "=== WDTT installer for OpenWrt 25.x (apk) ==="
-
-if command -v apk >/dev/null 2>&1; then
-	PKG="apk"
-	apk update
-	apk add wdtt-client luci-app-wdtt || {
-		echo "Пакеты не найдены в репозитории."
-		echo "Соберите feed или установите .apk вручную:"
-		echo "  apk add /tmp/wdtt-client-*.apk /tmp/luci-app-wdtt-*.apk"
-		exit 1
-	}
-elif command -v opkg >/dev/null 2>&1; then
-	echo "Обнаружен opkg (OpenWrt < 25). Используйте:"
-	echo "  opkg install wdtt-client luci-app-wdtt"
-	exit 1
-else
-	echo "Менеджер пакетов не найден."
+if [ -z "$GITHUB_TOKEN" ]; then
+	echo "Укажите GITHUB_TOKEN:"
+	echo "  export GITHUB_TOKEN='github_pat_...'"
+	echo "  sh scripts/install-tr3000.sh root@192.168.1.1"
 	exit 1
 fi
 
-/etc/init.d/rpcd restart 2>/dev/null || true
-/etc/init.d/wdtt enable 2>/dev/null || true
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo ""
-echo "Готово. Откройте LuCI → Сервисы → WDTT VPN"
-echo "Профиль для TR3000: /etc/config/wdtt (см. profiles/cudy-tr3000.example)"
+echo "Copying install.sh to $ROUTER ..."
+scp "$DIR/install.sh" "$ROUTER:/tmp/wdtt-install.sh"
+
+echo "Running installer on router ..."
+ssh "$ROUTER" "chmod +x /tmp/wdtt-install.sh && GITHUB_TOKEN='$GITHUB_TOKEN' sh /tmp/wdtt-install.sh"

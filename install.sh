@@ -1,6 +1,16 @@
 #!/bin/sh
 # WDTT installer for OpenWrt (apk / opkg) — Cudy TR3000 256MB and compatible
-# Usage: sh <(wget -O - https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh)
+#
+# Публичный репозиторий:
+#   sh <(wget -O - https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh)
+#
+# Приватный репозиторий (нужен GitHub token с правом Contents: Read):
+#   export GITHUB_TOKEN="github_pat_..."
+#   sh <(wget --header="Authorization: Bearer $GITHUB_TOKEN" -O - \
+#     https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/install.sh)
+#
+# Или скопировать скрипт на роутер:
+#   scp install.sh root@192.168.1.1:/tmp/ && ssh root@192.168.1.1 'GITHUB_TOKEN=xxx sh /tmp/install.sh'
 
 set -e
 
@@ -11,12 +21,115 @@ RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 COUNT=3
 
+# Токен: переменная окружения или файл (chmod 600)
+if [ -z "$GITHUB_TOKEN" ] && [ -f /etc/wdtt/github_token ]; then
+	GITHUB_TOKEN="$(cat /etc/wdtt/github_token)"
+fi
+
 PKG_IS_APK=0
 command -v apk >/dev/null 2>&1 && PKG_IS_APK=1
 
 msg()  { printf "\033[32;1m%s\033[0m\n" "$1"; }
 warn() { printf "\033[33;1m%s\033[0m\n" "$1"; }
 err()  { printf "\033[31;1m%s\033[0m\n" "$1"; }
+
+github_headers() {
+	if [ -n "$GITHUB_TOKEN" ]; then
+		printf '%s\n' "Authorization: Bearer $GITHUB_TOKEN"
+	fi
+}
+
+# Скачивание с поддержкой приватного GitHub
+download_file() {
+	local url="$1" dest="$2"
+	local attempt=0 hdr
+
+	while [ "$attempt" -lt "$COUNT" ]; do
+		msg "Download $(basename "$dest") (attempt $((attempt + 1)))..."
+
+		if command -v curl >/dev/null 2>&1; then
+			if [ -n "$GITHUB_TOKEN" ]; then
+				if curl -fsSL \
+					-H "Authorization: Bearer $GITHUB_TOKEN" \
+					-H "Accept: application/octet-stream" \
+					-L -o "$dest" "$url" 2>/dev/null; then
+					[ -s "$dest" ] && return 0
+				fi
+			else
+				if curl -fsSL -L -o "$dest" "$url" 2>/dev/null; then
+					[ -s "$dest" ] && return 0
+				fi
+			fi
+		fi
+
+		if [ -n "$GITHUB_TOKEN" ]; then
+			if wget -q -O "$dest" \
+				--header="Authorization: Bearer $GITHUB_TOKEN" \
+				--header="Accept: application/octet-stream" \
+				"$url" 2>/dev/null; then
+				[ -s "$dest" ] && return 0
+			fi
+		else
+			if wget -q -O "$dest" "$url" 2>/dev/null; then
+				[ -s "$dest" ] && return 0
+			fi
+		fi
+
+		rm -f "$dest"
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+github_api_get() {
+	local url="$1" out="$2"
+
+	if command -v curl >/dev/null 2>&1; then
+		if [ -n "$GITHUB_TOKEN" ]; then
+			curl -fsSL \
+				-H "Authorization: Bearer $GITHUB_TOKEN" \
+				-H "Accept: application/vnd.github+json" \
+				-o "$out" "$url"
+		else
+			curl -fsSL -o "$out" "$url"
+		fi
+	else
+		if [ -n "$GITHUB_TOKEN" ]; then
+			wget -q -O "$out" \
+				--header="Authorization: Bearer $GITHUB_TOKEN" \
+				--header="Accept: application/vnd.github+json" \
+				"$url"
+		else
+			wget -q -O "$out" "$url"
+		fi
+	fi
+}
+
+check_github_access() {
+	local probe="$DOWNLOAD_DIR/probe.txt"
+
+	if github_api_get "$RELEASE_API" "$DOWNLOAD_DIR/release_probe.json" 2>/dev/null; then
+		return 0
+	fi
+
+	if [ -z "$GITHUB_TOKEN" ]; then
+		err "Репозиторий приватный — нужен GITHUB_TOKEN."
+		err ""
+		err "1. GitHub → Settings → Developer settings → Fine-grained tokens"
+		err "   Права: Repository access → WDTT-Cudy-TR3000-256mb, Contents: Read"
+		err ""
+		err "2. На роутере:"
+		err "   export GITHUB_TOKEN='github_pat_...'"
+		err "   sh <(wget --header=\"Authorization: Bearer \$GITHUB_TOKEN\" -O - \\"
+		err "     https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh)"
+		err ""
+		err "Или: scp install.sh root@ROUTER:/tmp/ && GITHUB_TOKEN=xxx sh /tmp/install.sh"
+		exit 1
+	fi
+
+	err "GitHub API недоступен. Проверьте GITHUB_TOKEN и интернет."
+	exit 1
+}
 
 pkg_list_update() {
 	if [ "$PKG_IS_APK" -eq 1 ]; then
@@ -54,41 +167,27 @@ detect_arch() {
 	esac
 }
 
-download_file() {
-	local url="$1" dest="$2"
-	local attempt=0
-	while [ "$attempt" -lt "$COUNT" ]; do
-		msg "Download $(basename "$dest") (attempt $((attempt + 1)))..."
-		if wget -q -O "$dest" "$url"; then
-			if [ -s "$dest" ]; then
-				return 0
-			fi
-		fi
-		rm -f "$dest"
-		attempt=$((attempt + 1))
-	done
-	return 1
-}
-
 install_from_release() {
-	local arch pattern url filename filepath
+	local pattern filename filepath installed=0
 
-	arch="$(detect_arch)"
 	if [ "$PKG_IS_APK" -eq 1 ]; then
-		pattern='https://[^"[:space:]]*\.apk'
+		pattern='\.apk'
 	else
-		pattern='https://[^"[:space:]]*\.ipk'
+		pattern='\.ipk'
 	fi
 
-	if ! wget -qO- "$RELEASE_API" | grep -o "$pattern" > "$DOWNLOAD_DIR/urls.txt" 2>/dev/null; then
+	if ! github_api_get "$RELEASE_API" "$DOWNLOAD_DIR/release.json"; then
 		return 1
 	fi
+
+	# browser_download_url из JSON релиза
+	grep -o 'https://[^"]*'"$pattern" "$DOWNLOAD_DIR/release.json" 2>/dev/null | \
+		sort -u > "$DOWNLOAD_DIR/urls.txt" || true
 
 	if [ ! -s "$DOWNLOAD_DIR/urls.txt" ]; then
 		return 1
 	fi
 
-	local installed=0
 	while read -r url; do
 		[ -z "$url" ] && continue
 		filename="$(basename "$url")"
@@ -107,8 +206,20 @@ install_from_release() {
 	[ "$installed" -eq 1 ]
 }
 
+find_release_binary() {
+	local goarch="$1" out="$2"
+
+	if ! github_api_get "$RELEASE_API" "$DOWNLOAD_DIR/release.json"; then
+		return 1
+	fi
+
+	# Ищем browser_download_url для wdttd-linux-ARCH
+	grep -o "https://[^\"]*wdttd-linux-${goarch}[^\"]*" "$DOWNLOAD_DIR/release.json" 2>/dev/null | head -n1 > "$out"
+	[ -s "$out" ]
+}
+
 install_from_source() {
-	local arch goarch dest
+	local arch goarch bin_url="" LUCI_VIEW
 
 	arch="$(detect_arch)"
 	case "$arch" in
@@ -121,30 +232,26 @@ install_from_source() {
 			;;
 	esac
 
-	msg "Installing from source (no release packages found)..."
-
-	# wdttd binary from latest release asset or GitHub Actions artifact name
-	local bin_url=""
-	if wget -qO- "$RELEASE_API" 2>/dev/null | grep -o "https://[^\"[:space:]]*wdttd-linux-${goarch}[^\"[:space:]]*" > "$DOWNLOAD_DIR/binurl.txt"; then
-		bin_url="$(head -n1 "$DOWNLOAD_DIR/binurl.txt" 2>/dev/null)"
-	fi
+	msg "Installing from repository files..."
 
 	mkdir -p /usr/sbin /usr/libexec/wdtt /var/run/wdtt \
 		/etc/init.d /etc/config /etc/hotplug.d/iface \
 		/etc/uci-defaults /usr/share/luci/menu.d \
-		/usr/share/rpcd/acl.d /usr/libexec/rpcd \
-		/htdocs/luci-static/resources/view/wdtt 2>/dev/null || true
+		/usr/share/rpcd/acl.d /usr/libexec/rpcd 2>/dev/null || true
 
-	# LuCI path on OpenWrt
 	LUCI_VIEW="/www/luci-static/resources/view/wdtt"
 	mkdir -p "$LUCI_VIEW"
+
+	if find_release_binary "$goarch" "$DOWNLOAD_DIR/binurl.txt"; then
+		bin_url="$(cat "$DOWNLOAD_DIR/binurl.txt")"
+	fi
 
 	if [ -n "$bin_url" ] && download_file "$bin_url" "$DOWNLOAD_DIR/wdttd"; then
 		install -m 0755 "$DOWNLOAD_DIR/wdttd" /usr/sbin/wdttd
 	else
 		err "Binary wdttd-linux-${goarch} not found in releases."
-		err "Create a GitHub Release with asset wdttd-linux-${goarch}"
-		err "Or build feed manually: see README.md"
+		err "Создайте Release на GitHub (тег v1.0.0) с asset wdttd-linux-${goarch}"
+		err "Или проверьте GITHUB_TOKEN для приватного репозитория."
 		exit 1
 	fi
 
@@ -202,13 +309,13 @@ check_system() {
 	fi
 
 	case "$(detect_arch)" in
-		aarch64)
-			msg "Architecture: aarch64 (Cudy TR3000 OK)"
-			;;
-		*)
-			warn "Architecture: $(detect_arch) — primary target is aarch64 (TR3000)"
-			;;
+		aarch64) msg "Architecture: aarch64 (Cudy TR3000 OK)" ;;
+		*)       warn "Architecture: $(detect_arch) — primary target is aarch64 (TR3000)" ;;
 	esac
+
+	if [ -n "$GITHUB_TOKEN" ]; then
+		msg "GitHub token: detected (private repo OK)"
+	fi
 }
 
 install_dependencies() {
@@ -231,7 +338,6 @@ post_install() {
 		download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt || true
 	fi
 
-	# Профиль TR3000 — только если конфиг пустой
 	if ! uci -q get wdtt.globals.peer >/dev/null 2>&1; then
 		warn "Configure WDTT: uci set wdtt.globals.peer / password / hashes"
 		warn "Or LuCI → Services → WDTT VPN"
@@ -245,7 +351,6 @@ post_install() {
 	msg "============================================"
 	msg " WDTT installed successfully!"
 	msg " LuCI: Services → WDTT VPN"
-	msg " Docs: https://github.com/${GITHUB_REPO}"
 	msg "============================================"
 	msg ""
 	msg "Quick start:"
@@ -266,6 +371,7 @@ main() {
 	mkdir -p "$DOWNLOAD_DIR"
 
 	check_system
+	check_github_access
 
 	if [ -f /etc/init.d/wdtt ]; then
 		msg "WDTT already installed — upgrading..."
@@ -280,7 +386,7 @@ main() {
 	if install_from_release; then
 		msg "Installed from release packages"
 	else
-		warn "Release packages not found, trying source install..."
+		warn "Release .apk/.ipk not found, installing from source..."
 		install_from_source
 	fi
 
