@@ -239,9 +239,17 @@ WDTT и Podkop можно использовать **вместе**:
 
 ## Капча
 
+Режим в LuCI → **Режим капчи**:
+
+| Режим | Описание |
+|-------|----------|
+| **Auto** | Авто Go v2, затем fallback |
+| **RJS** | Только авто Go v2 |
+| **WV** | Ручной: ссылка в браузере → `success_token` в LuCI (после лимита VK) |
+
 ```bash
 wdttd -captcha 'token'
-# или через LuCI → вкладка VK Smart Captcha
+# или LuCI → VK Smart Captcha → Отправить токен
 ```
 
 ## Лицензия

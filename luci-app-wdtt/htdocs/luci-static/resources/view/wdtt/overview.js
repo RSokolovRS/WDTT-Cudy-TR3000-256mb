@@ -93,9 +93,11 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.default = '1380';
 
-		o = s.option(form.ListValue, 'captcha_mode', _('Режим капчи'));
-		o.value('auto', _('Авто (Go v2)'));
-		o.value('rjs', 'RJS');
+		o = s.option(form.ListValue, 'captcha_mode', _('Режим капчи'),
+			_('Auto/RJS — роутер решает капчу сам. WV — вы открываете ссылку в браузере и вставляете success_token (рекомендуется после лимита VK).'));
+		o.value('auto', _('Авто (Go v2 + fallback)'));
+		o.value('rjs', _('RJS (только авто Go v2)'));
+		o.value('wv', _('WV (ручной — ссылка + токен)'));
 		o.default = 'auto';
 
 		o = s.option(form.ListValue, 'routing_mode', _('Маршрутизация'),
