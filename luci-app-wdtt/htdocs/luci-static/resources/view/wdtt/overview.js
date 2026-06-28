@@ -323,20 +323,24 @@ return view.extend({
 	handleConnect: function() {
 		return uci.set('wdtt', 'globals', 'enabled', '1')
 			.then(function() { return uci.save(); })
-			.then(function() { return uci.apply(); })
 			.then(function() { return fs.exec('/etc/init.d/wdtt', ['restart']); })
 			.then(function() {
 				ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель запускается...')), 3000);
+			})
+			.catch(function(e) {
+				ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
 			});
 	},
 
 	handleDisconnect: function() {
 		return uci.set('wdtt', 'globals', 'enabled', '0')
 			.then(function() { return uci.save(); })
-			.then(function() { return uci.apply(); })
 			.then(function() { return fs.exec('/etc/init.d/wdtt', ['stop']); })
 			.then(function() {
 				ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель остановлен')), 3000);
+			})
+			.catch(function(e) {
+				ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
 			});
 	},
 
