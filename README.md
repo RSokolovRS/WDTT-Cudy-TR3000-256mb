@@ -19,13 +19,25 @@ ln -sf /bin/uclient-fetch /usr/bin/wget
 apk del wget-nossl
 ```
 
-Установка (сначала зеркало jsDelivr — если `raw.githubusercontent.com` недоступен):
+Установка через jsDelivr (**не используйте `@main`** — CDN кэширует старые файлы):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a8dba0e/install.sh
 sh /tmp/wdtt-install.sh
 ```
+
+Должно быть `WDTT installer v3.3` и `[OK] LuCI view (WV mode)`.
+
+Если WV не появился — только LuCI-файл:
+
+```bash
+uclient-fetch -q -O /www/luci-static/resources/view/wdtt/overview.js \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a8dba0e/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js
+rm -rf /tmp/luci-*
+```
+
+Ctrl+F5 в браузере.
 
 Если jsDelivr доступен, но GitHub releases — нет, скопируйте бинарник с ПК:
 

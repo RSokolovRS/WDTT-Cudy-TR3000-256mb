@@ -15,12 +15,15 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.2"
+WDTT_INSTALL_VERSION="3.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
+# jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
+REPO_REF="a8dba0e"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
+JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v1.0.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
@@ -100,7 +103,7 @@ download_repo_file() {
 	local relpath="$1" dest="$2" label="$3"
 	local base url
 
-	for base in "$JSDELIVR_URL" "$RAW_URL"; do
+	for base in "$JSDELIVR_PIN" "$RAW_URL" "$JSDELIVR_URL"; do
 		url="${base}/${relpath}"
 		msg "  try: $url"
 		if download_file "$url" "$dest"; then
@@ -152,16 +155,22 @@ github_api_get() {
 }
 
 check_github_access() {
-	# Проверяем доступ (jsDelivr → raw GitHub)
-	if download_file "$JSDELIVR_URL/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
+	# Проверяем доступ (jsDelivr pin → raw → jsDelivr @main)
+	if download_file "$JSDELIVR_PIN/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
 		rm -f "$DOWNLOAD_DIR/probe.sh"
-		msg "CDN: jsDelivr OK"
+		msg "CDN: jsDelivr (pin ${REPO_REF}) OK"
 		return 0
 	fi
 
 	if download_file "$RAW_URL/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
 		rm -f "$DOWNLOAD_DIR/probe.sh"
 		msg "GitHub: публичный доступ OK"
+		return 0
+	fi
+
+	if download_file "$JSDELIVR_URL/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
+		rm -f "$DOWNLOAD_DIR/probe.sh"
+		msg "CDN: jsDelivr @main OK"
 		return 0
 	fi
 
@@ -393,7 +402,13 @@ verify_install() {
 		ok=0
 	fi
 	if [ -f /www/luci-static/resources/view/wdtt/overview.js ]; then
-		msg "  [OK] LuCI view"
+		if grep -q "WV (ручной" /www/luci-static/resources/view/wdtt/overview.js 2>/dev/null; then
+			msg "  [OK] LuCI view (WV mode)"
+		else
+			warn "  [??] LuCI view устарел — jsDelivr cache? Перекачайте overview.js"
+			warn "      uclient-fetch -O /www/luci-static/resources/view/wdtt/overview.js \\"
+			warn "        ${JSDELIVR_PIN}/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js"
+		fi
 	else
 		warn "  [??] LuCI view missing — очистите кэш браузера"
 	fi
@@ -530,6 +545,7 @@ post_install() {
 	fi
 
 	[ -x /etc/uci-defaults/99-wdtt ] && /etc/uci-defaults/99-wdtt || true
+	rm -rf /tmp/luci-* 2>/dev/null || true
 	/etc/init.d/rpcd restart 2>/dev/null || true
 	/etc/init.d/wdtt enable 2>/dev/null || true
 
