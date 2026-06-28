@@ -180,36 +180,75 @@ return view.extend({
 		s = m.section(form.NamedSection, 'globals', 'globals', _('VK Smart Captcha'));
 
 		s.render = L.bind(function() {
-			var cap = status.captcha || {};
-			return E('div', { 'class': 'cbi-section' }, [
-				E('p', {}, cap.required
-					? _('Требуется прохождение капчи. Откройте ссылку, решите капчу и вставьте токен.')
-					: _('Капча не требуется.')),
-				cap.redirect_uri ? E('p', {}, [
-					E('a', { 'href': cap.redirect_uri, 'target': '_blank' }, cap.redirect_uri)
-				]) : '',
-				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, _('Токен капчи')),
-					E('div', { 'class': 'cbi-value-field' }, [
-						E('input', {
-							'id': 'wdtt-captcha-token',
-							'type': 'text',
-							'style': 'width:100%',
-							'placeholder': 'success_token_...'
-						}),
-						E('button', {
-							'class': 'btn cbi-button cbi-button-apply',
-							'style': 'margin-top:8px',
-							'click': ui.createHandlerFn(self, self.handleCaptcha)
-						}, _('Отправить токен'))
-					])
-				])
-			]);
+			return E('div', { 'class': 'cbi-section', 'id': 'wdtt-captcha-panel' },
+				self.renderCaptchaPanel(status.captcha || {}));
 		}, s);
 
 		poll.add(L.bind(this.pollStatus, this), 3);
 
 		return m.render();
+	},
+
+	renderCaptchaPanel: function(cap) {
+		cap = cap || {};
+		var uri = cap.redirect_uri || '';
+		var nodes = [
+			E('h3', {}, _('VK Smart Captcha')),
+			E('p', {}, cap.required
+				? _('Требуется капча VK. Ссылка живёт ~1–2 минуты — при ошибке нажмите «Подключить» снова.')
+				: _('Капча не требуется.'))
+		];
+
+		if (uri) {
+			nodes.push(
+				E('p', { 'class': 'hint' },
+					_('Если ссылка не открывается: скопируйте URL, откройте на телефоне с мобильным интернетом (не через роутер).')),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('Ссылка на капчу')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('textarea', {
+							'id': 'wdtt-captcha-url',
+							'readonly': 'readonly',
+							'rows': 3,
+							'style': 'width:100%;font-family:monospace;font-size:12px;'
+						}, uri),
+						E('div', { 'class': 'cbi-page-actions', 'style': 'margin-top:8px' }, [
+							E('button', {
+								'class': 'btn cbi-button cbi-button-action',
+								'click': ui.createHandlerFn(this, this.handleOpenCaptcha)
+							}, _('Открыть в новой вкладке')),
+							E('button', {
+								'class': 'btn cbi-button cbi-button-save',
+								'click': ui.createHandlerFn(this, this.handleCopyCaptchaUrl)
+							}, _('Копировать URL'))
+						])
+					])
+				])
+			);
+		}
+
+		nodes.push(
+			E('p', { 'class': 'hint' },
+				_('После решения капчи: F12 → Network → captchaNotRobot.check → success_token в ответе.')),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title' }, _('Токен капчи')),
+				E('div', { 'class': 'cbi-value-field' }, [
+					E('input', {
+						'id': 'wdtt-captcha-token',
+						'type': 'text',
+						'style': 'width:100%',
+						'placeholder': 'success_token_...'
+					}),
+					E('button', {
+						'class': 'btn cbi-button cbi-button-apply',
+						'style': 'margin-top:8px',
+						'click': ui.createHandlerFn(this, this.handleCaptcha)
+					}, _('Отправить токен'))
+				])
+			])
+		);
+
+		return nodes;
 	},
 
 	renderStatus: function(st) {
@@ -240,7 +279,45 @@ return view.extend({
 				var lines = (res[1] && res[1].lines) || [];
 				dom.content(logView, lines.length ? lines.join('\n') : _('Лог пуст'));
 			}
+
+			var capPanel = document.getElementById('wdtt-captcha-panel');
+			if (capPanel && res[0] && res[0].state === 'captcha_required') {
+				var cap = res[0].captcha || {};
+				var ta = document.getElementById('wdtt-captcha-url');
+				if (cap.redirect_uri && (!ta || ta.value !== cap.redirect_uri)) {
+					dom.content(capPanel, self.renderCaptchaPanel(cap));
+				}
+			}
 		});
+	},
+
+	handleOpenCaptcha: function() {
+		var ta = document.getElementById('wdtt-captcha-url');
+		var uri = ta ? ta.value.trim() : '';
+		if (!uri) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Ссылка пуста — нажмите «Подключить» для новой капчи')), 4000, 'warning');
+			return;
+		}
+		window.open(uri, '_blank', 'noopener,noreferrer');
+	},
+
+	handleCopyCaptchaUrl: function() {
+		var ta = document.getElementById('wdtt-captcha-url');
+		var uri = ta ? ta.value.trim() : '';
+		if (!uri) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Нечего копировать')), 3000, 'warning');
+			return;
+		}
+		if (ta) {
+			ta.focus();
+			ta.select();
+		}
+		try {
+			document.execCommand('copy');
+			ui.addTimeLimitedNotification(null, E('p', {}, _('URL скопирован')), 2000, 'success');
+		} catch (e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Выделите URL и скопируйте вручную (Ctrl+C)')), 4000, 'warning');
+		}
 	},
 
 	handleConnect: function() {
