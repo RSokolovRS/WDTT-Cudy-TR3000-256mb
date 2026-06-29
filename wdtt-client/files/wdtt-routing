@@ -43,7 +43,10 @@ append_domain_nftset() {
 	local domain="$1"
 	domain="$(normalize_domain "$domain")"
 	case "$domain" in *" "*|*/*/*) return 0 ;; esac
-	[ -n "$domain" ] && echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
+	[ -n "$domain" ] || return 0
+	grep -qF "nftset=/${domain}/" "$DNSMASQ_SNIPPET" 2>/dev/null && return 0
+	echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
+	log "nftset domain: ${domain}"
 }
 
 # Разбор UCI list: domain[0], domain[1] или 'a.com' 'b.com' в одной строке
@@ -57,7 +60,7 @@ _split_uci_values() {
 }
 
 uci_foreach_list() {
-	local section="$1" option="$2" callback="$3" i=0 val found=0 line quoted
+	local section="$1" option="$2" callback="$3" i=0 val found=0 line
 
 	while val="$(uci -q get wdtt.${section}.${option}[$i] 2>/dev/null)" && [ -n "$val" ]; do
 		"$callback" "$val"
@@ -66,19 +69,28 @@ uci_foreach_list() {
 	done
 
 	if [ "$found" -eq 0 ]; then
-		for line in $(uci -q show "wdtt.${section}" 2>/dev/null | grep "^wdtt\.${section}\.${option}\["); do
+		uci -q show "wdtt.${section}" 2>/dev/null | grep -E "^wdtt\.${section}\.${option}(\[|[=])" | while read -r line; do
 			val="${line#*=}"
 			val="${val#\'}"
 			val="${val%\'}"
 			[ -n "$val" ] && "$callback" "$val"
-			found=1
 		done
+		found=1
 	fi
 
 	if [ "$found" -eq 0 ]; then
 		val="$(uci -q get wdtt.${section}.${option} 2>/dev/null)"
 		_split_uci_values "$val" "$callback"
 	fi
+}
+
+# list domain/domains через config_load (то же, что в /etc/config/wdtt)
+config_foreach_list() {
+	local section="$1" option="$2" callback="$3" merged=""
+
+	config_list_foreach "$section" "$option" "$callback" 2>/dev/null
+	config_get merged "$section" "$option" ""
+	[ -n "$merged" ] && _split_uci_values "$merged" "$callback"
 }
 
 append_url_domains() {
@@ -116,8 +128,8 @@ build_rule_dnsmasq() {
 		return 0
 	}
 
-	uci_foreach_list "$section" domain append_domain_nftset
-	uci_foreach_list "$section" domains append_domain_nftset
+	config_foreach_list "$section" domain append_domain_nftset
+	config_foreach_list "$section" domains append_domain_nftset
 	append_url_domains "$section"
 }
 
@@ -312,7 +324,9 @@ do_status() {
 	echo "--- uci rules ---"
 	config_load wdtt
 	config_foreach show_rule_status rule
-	uci show wdtt 2>/dev/null | grep -E '\.domain|\.subnet' || true
+	uci show wdtt.youtube 2>/dev/null || true
+	echo "--- /etc/config/wdtt (youtube) ---"
+	sed -n "/config rule 'youtube'/,/^config /p" /etc/config/wdtt 2>/dev/null | head -20
 	echo "--- $DNSMASQ_SNIPPET ---"
 	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
 		cat "$DNSMASQ_SNIPPET"
