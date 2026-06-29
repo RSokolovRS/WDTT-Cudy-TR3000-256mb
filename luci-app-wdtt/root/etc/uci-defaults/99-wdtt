@@ -25,9 +25,11 @@ EOF
 fi
 
 # dnsmasq: подхватывает /tmp/dnsmasq.d/*.conf
-if ! uci -q get dhcp.@dnsmasq[0].confdir >/dev/null; then
-	uci -q add_list dhcp.@dnsmasq[0].confdir='/tmp/dnsmasq.d' 2>/dev/null
-	uci commit dhcp 2>/dev/null
+if uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
+	if ! uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null | grep -qF '/tmp/dnsmasq.d'; then
+		uci -q add_list dhcp.@dnsmasq[0].confdir='/tmp/dnsmasq.d' 2>/dev/null
+		uci commit dhcp 2>/dev/null
+	fi
 fi
 
 mkdir -p /tmp/dnsmasq.d /var/run/wdtt

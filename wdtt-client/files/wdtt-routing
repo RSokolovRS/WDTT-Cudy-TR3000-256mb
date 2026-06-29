@@ -19,6 +19,16 @@ STATE_DIR=/var/run/wdtt
 
 log() { logger -t wdtt-routing "$*"; }
 
+# https://2ip.io/ → 2ip.io
+normalize_domain() {
+	local d="$1"
+	d="${d#https://}"
+	d="${d#http://}"
+	d="${d%%/*}"
+	d="${d%/}"
+	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
+}
+
 ipset_create() {
 	local name="$1"
 	ipset destroy "$name" 2>/dev/null
@@ -84,6 +94,7 @@ build_rule_dnsmasq() {
 	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
 
 	collect_domains "$section" route | while read -r domain; do
+		domain="$(normalize_domain "$domain")"
 		[ -n "$domain" ] && echo "ipset=/${domain}/${IPSET_ROUTE}" >> "$DNSMASQ_SNIPPET"
 	done
 }
@@ -211,6 +222,26 @@ do_reload() {
 	do_start
 }
 
+do_status() {
+	local mode
+	mode="$(uci -q get wdtt.globals.routing_mode)"
+	echo "routing_mode=${mode:-?}"
+	echo "state_file=$(cat "$STATE_DIR/routing.mode" 2>/dev/null || echo missing)"
+	echo "dnsmasq_confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+	echo "--- $DNSMASQ_SNIPPET ---"
+	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
+		cat "$DNSMASQ_SNIPPET"
+	else
+		echo "(empty — включите правило route + домен, затем: routing reload wg-wdtt)"
+	fi
+	echo "--- ipset $IPSET_ROUTE ---"
+	ipset list "$IPSET_ROUTE" 2>/dev/null | head -25 || echo "(ipset missing — apk add ipset)"
+	echo "--- nft wdtt ---"
+	nft list table inet wdtt 2>/dev/null | head -15 || echo "(nft table missing)"
+	echo "--- ip rule ---"
+	ip rule | grep -F "$MARK" || echo "(no policy rule)"
+}
+
 case "$1" in
 	start)
 		routing_mode="$(uci -q get wdtt.globals.routing_mode)"
@@ -220,7 +251,8 @@ case "$1" in
 		;;
 	stop)   do_stop ;;
 	reload) do_reload ;;
-	*)      echo "Usage: $0 {start|stop|reload} [iface]" >&2; exit 1 ;;
+	status) do_status ;;
+	*)      echo "Usage: $0 {start|stop|reload|status} [iface]" >&2; exit 1 ;;
 esac
 
 exit 0
