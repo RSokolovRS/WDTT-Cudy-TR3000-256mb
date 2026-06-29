@@ -129,7 +129,62 @@ trim_line() {
 	printf '%s' "$line"
 }
 
-# Только /etc/config/wdtt — uci get может расходиться после sed (stale 2iw.io)
+# Синхронизация uci list domain ← /etc/config/wdtt (ghost indices: 2iw.io, yoltlbe.com)
+_sync_one_rule_domains() {
+	local section="$1" domains="$2" first d uci0
+
+	first="${domains#"${domains%%[![:space:]]*}"}"
+	first="${first%% *}"
+	[ -n "$first" ] || return 0
+	uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
+	[ "$uci0" = "$first" ] && return 0
+
+	log "sync uci ${section}.domain from config file (was: ${uci0:-empty})"
+	uci -q delete "wdtt.${section}.domain" 2>/dev/null
+	for d in $domains; do
+		[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
+	done
+	uci -q commit wdtt 2>/dev/null
+}
+
+sync_wdtt_domains_uci() {
+	local line section="" domains="" count=0 in_rule=0 val
+
+	[ -x /sbin/uci ] || return 0
+	[ -r /etc/config/wdtt ] || return 0
+
+	while read -r line || [ -n "$line" ]; do
+		line="$(trim_line "$line")"
+		case "$line" in
+			config\ rule\ *)
+				[ -n "$section" ] && [ "$count" -gt 0 ] && _sync_one_rule_domains "$section" "$domains"
+				section="${line#config rule }"
+				section="${section#\'}"; section="${section%%\'*}"
+				if [ "$section" = "${line#config rule }" ]; then
+					section="${section#\"}"; section="${section%%\"*}"
+				fi
+				section="${section%% *}"
+				domains=""; count=0; in_rule=1
+				continue
+				;;
+			config\ *)
+				[ -n "$section" ] && [ "$count" -gt 0 ] && _sync_one_rule_domains "$section" "$domains"
+				section=""; domains=""; count=0; in_rule=0
+				continue
+				;;
+		esac
+		[ "$in_rule" -eq 1 ] || continue
+		case "$line" in
+			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
+				val="$(uci_line_value "$line")"
+				[ -n "$val" ] && domains="$domains $val" && count=$((count + 1))
+				;;
+		esac
+	done < /etc/config/wdtt
+	[ -n "$section" ] && [ "$count" -gt 0 ] && _sync_one_rule_domains "$section" "$domains"
+}
+
+# Только list domain из /etc/config/wdtt (option domain — legacy/ghost, игнорируем)
 build_dnsmasq() {
 	local line section="" type="route" enabled="1" in_rule=0 val n=0
 
@@ -140,6 +195,8 @@ build_dnsmasq() {
 		log "ERROR: /etc/config/wdtt missing"
 		return 1
 	}
+
+	sync_wdtt_domains_uci
 
 	while read -r line || [ -n "$line" ]; do
 		line="$(trim_line "$line")"
@@ -180,11 +237,9 @@ build_dnsmasq() {
 				val="$(uci_line_value "$line")"
 				append_domain_nftset "$val"
 				;;
-			option\ domain|option\ domain\ *|option\ domains|option\ domains\ *)
-				[ "$type" = "route" ] || continue
-				[ "$enabled" = "0" ] && continue
-				val="$(uci_line_value "$line")"
-				_split_uci_values "$val" append_domain_nftset
+			option\ domain*|option\ domains*)
+				# LuCI пишет list domain; option domain — устаревшие опечатки (2iw.io)
+				continue
 				;;
 			option\ list_url\ *)
 				[ "$type" = "route" ] || continue
@@ -329,7 +384,13 @@ setup_policy_routing() {
 }
 
 reload_dnsmasq() {
-	[ -f /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq restart 2>/dev/null
+	[ -f /etc/init.d/dnsmasq ] || return 0
+	if /etc/init.d/dnsmasq reload 2>/dev/null; then
+		return 0
+	fi
+	/etc/init.d/dnsmasq restart 2>/dev/null
+	sleep 1
+	pgrep -x dnsmasq >/dev/null 2>&1 || /etc/init.d/dnsmasq start 2>/dev/null
 }
 
 do_start() {
