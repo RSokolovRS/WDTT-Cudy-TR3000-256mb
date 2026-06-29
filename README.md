@@ -23,7 +23,7 @@ apk del wget-nossl
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_REF/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@84abedd/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -47,7 +47,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a4068a0/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@84abedd/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -55,7 +55,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-bootstrap.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a4068a0/bootstrap.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@84abedd/bootstrap.sh
 sh /tmp/wdtt-bootstrap.sh
 ```
 
