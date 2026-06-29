@@ -19,25 +19,21 @@ ln -sf /bin/uclient-fetch /usr/bin/wget
 apk del wget-nossl
 ```
 
-Установка через jsDelivr (**не используйте `@main`** — CDN кэширует старые файлы):
+Установка одной командой (актуальный pin, **не @main**):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a4068a0/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_REF/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
-Должно быть `WDTT installer v3.3` и `[OK] LuCI view (WV mode)`.
+Должно быть `WDTT installer v3.4`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
-Если WV не появился — только LuCI-файл:
+После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → правило **2ip.io** → Подключить → когда **connected**:
 
 ```bash
-uclient-fetch -q -O /www/luci-static/resources/view/wdtt/overview.js \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a4068a0/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js
-rm -rf /tmp/luci-*
+/usr/libexec/wdtt/routing reload wg-wdtt
 ```
-
-Ctrl+F5 в браузере.
 
 Если jsDelivr доступен, но GitHub releases — нет, скопируйте бинарник с ПК:
 

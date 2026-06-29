@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.3"
+WDTT_INSTALL_VERSION="3.4"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -413,7 +413,40 @@ verify_install() {
 		warn "  [??] LuCI view missing — очистите кэш браузера"
 	fi
 
+	if [ -f /usr/libexec/wdtt/routing ]; then
+		if grep -q 'STATE_DIR/wdtt.nft' /usr/libexec/wdtt/routing 2>/dev/null; then
+			msg "  [OK] routing (nft+nftset)"
+		else
+			warn "  [??] routing устарел — переустановите install.sh"
+		fi
+	fi
+	if command -v nft >/dev/null 2>&1; then
+		msg "  [OK] nft"
+	else
+		warn "  [??] nft missing — apk add nftables kmod-nft-core"
+	fi
+	if dnsmasq --version 2>/dev/null | grep -q nftset; then
+		msg "  [OK] dnsmasq nftset"
+	else
+		warn "  [??] dnsmasq без nftset — apk add dnsmasq-full"
+	fi
+	if uci -q get firewall.wdtt_lan_fwd.src >/dev/null 2>&1; then
+		msg "  [OK] firewall lan→wdtt"
+	else
+		warn "  [??] firewall forward missing — sh /etc/uci-defaults/99-wdtt"
+	fi
+
 	return "$ok"
+}
+
+fix_wdtt_legacy() {
+	# Старые версии: table в nftables.d ломает fw4
+	if [ -f /etc/nftables.d/99-wdtt.nft ]; then
+		warn "Удаляем legacy /etc/nftables.d/99-wdtt.nft (ломает firewall)"
+		rm -f /etc/nftables.d/99-wdtt.nft
+		/etc/init.d/firewall reload 2>/dev/null || true
+	fi
+	/usr/libexec/wdtt/routing stop 2>/dev/null || true
 }
 
 check_system() {
@@ -540,28 +573,44 @@ post_install() {
 		download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt || true
 	fi
 
-	if ! uci -q get wdtt.globals.peer >/dev/null 2>&1; then
-		warn "Configure WDTT: uci set wdtt.globals.peer / password / hashes"
-		warn "Or LuCI → Services → WDTT VPN"
-	fi
+	fix_wdtt_legacy
 
 	[ -x /etc/uci-defaults/99-wdtt ] && /etc/uci-defaults/99-wdtt || true
+
 	rm -rf /tmp/luci-* 2>/dev/null || true
 	/etc/init.d/rpcd restart 2>/dev/null || true
 	/etc/init.d/wdtt enable 2>/dev/null || true
 
 	msg ""
 	msg "============================================"
-	msg " WDTT installed successfully!"
+	msg " WDTT v${WDTT_INSTALL_VERSION} installed!"
 	msg " LuCI: Services → WDTT VPN"
 	msg "============================================"
+	msg ""
+	msg "1) Туннель (LuCI или SSH):"
+	msg "   peer, password, VK-hashes, enabled=1"
+	msg "   captcha_mode=wv — ручная капча (рекомендуется)"
+	msg ""
+	msg "2) Selective routing (после connected):"
+	msg "   LuCI → правило route → Включено"
+	msg "   Домены: 2ip.io (без https://, без опечаток)"
+	msg "   После connected: routing reload wg-wdtt"
+	msg ""
+	msg "3) Проверка:"
+	msg "   /usr/libexec/wdtt/routing status"
+	msg "   nslookup 2ip.io 127.0.0.1"
+	msg "   nft list set inet wdtt wdtt_route"
 	msg ""
 	msg "Quick start:"
 	msg "  uci set wdtt.globals.peer='VPS:56000'"
 	msg "  uci set wdtt.globals.password='password'"
 	msg "  uci set wdtt.globals.hashes='vk_hash'"
+	msg "  uci set wdtt.globals.captcha_mode='wv'"
 	msg "  uci set wdtt.globals.enabled='1'"
-	msg "  uci commit wdtt && /etc/init.d/wdtt start"
+	msg "  uci set wdtt.youtube.enabled='1'"
+	msg "  uci delete wdtt.youtube.domain 2>/dev/null"
+	msg "  uci add_list wdtt.youtube.domain='2ip.io'"
+	msg "  uci commit wdtt && /etc/init.d/wdtt restart"
 }
 
 main() {
