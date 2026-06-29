@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.4"
+WDTT_INSTALL_VERSION="3.4.1"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -355,8 +355,7 @@ install_from_source() {
 	msg "  OK: /usr/sbin/wdttd ($(wc -c < /usr/sbin/wdttd) bytes)"
 
 	msg "Step 2/3: scripts and config..."
-	install_repo_file "wdtt-client/files/wdtt-routing" /usr/libexec/wdtt/routing "routing" || exit 1
-	chmod 0755 /usr/libexec/wdtt/routing
+	ensure_routing_script || exit 1
 
 	install_repo_file "luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt "init.d" || exit 1
 	chmod 0755 /etc/init.d/wdtt
@@ -386,6 +385,32 @@ install_from_source() {
 	msg "WDTT files installed."
 }
 
+routing_is_current() {
+	local f="${1:-/usr/libexec/wdtt/routing}"
+
+	[ -f "$f" ] || return 1
+	grep -q '/var/run/wdtt/wdtt.nft' "$f" 2>/dev/null || return 1
+	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
+	return 0
+}
+
+ensure_routing_script() {
+	local dest="/usr/libexec/wdtt/routing"
+
+	if ! routing_is_current "$dest"; then
+		warn "Обновляем routing (nft → /var/run/wdtt/wdtt.nft)..."
+		install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing" || return 1
+		chmod 0755 "$dest"
+	fi
+
+	if routing_is_current "$dest"; then
+		return 0
+	fi
+
+	err "routing не обновился (CDN cache?) — скачайте вручную с RAW GitHub"
+	return 1
+}
+
 verify_install() {
 	local ok=1
 
@@ -413,12 +438,14 @@ verify_install() {
 		warn "  [??] LuCI view missing — очистите кэш браузера"
 	fi
 
-	if [ -f /usr/libexec/wdtt/routing ]; then
-		if grep -q 'STATE_DIR/wdtt.nft' /usr/libexec/wdtt/routing 2>/dev/null; then
-			msg "  [OK] routing (nft+nftset)"
-		else
-			warn "  [??] routing устарел — переустановите install.sh"
-		fi
+	if routing_is_current /usr/libexec/wdtt/routing; then
+		msg "  [OK] routing (nft+nftset)"
+	elif [ -f /usr/libexec/wdtt/routing ]; then
+		warn "  [??] routing устарел (nftables.d) — sh install.sh или:"
+		warn "      uclient-fetch -O /usr/libexec/wdtt/routing \\"
+		warn "        ${JSDELIVR_PIN}/wdtt-client/files/wdtt-routing"
+	else
+		warn "  [??] /usr/libexec/wdtt/routing missing"
 	fi
 	if command -v nft >/dev/null 2>&1; then
 		msg "  [OK] nft"
@@ -447,6 +474,7 @@ fix_wdtt_legacy() {
 		/etc/init.d/firewall reload 2>/dev/null || true
 	fi
 	/usr/libexec/wdtt/routing stop 2>/dev/null || true
+	ensure_routing_script 2>/dev/null || true
 }
 
 check_system() {
