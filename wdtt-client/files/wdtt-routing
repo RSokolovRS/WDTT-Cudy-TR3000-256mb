@@ -127,6 +127,13 @@ append_url_domains() {
 
 	list_url="$(uci -q get wdtt.${section}.list_url)"
 	[ -n "$list_url" ] || return 0
+	case "$list_url" in
+		http://*|https://*) ;;
+		*)
+			log "skip invalid list_url for ${section}: ${list_url}"
+			return 0
+			;;
+	esac
 	log "list_url ${section}: ${list_url}"
 	tmp="$(mktemp /tmp/wdtt-list.XXXXXX)"
 	wget -qO "$tmp" "$list_url" 2>/dev/null || {
