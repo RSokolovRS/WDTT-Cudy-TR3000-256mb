@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.0"
+WDTT_INSTALL_VERSION="3.6.1"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -335,6 +335,33 @@ find_release_binary() {
 	[ -s "$out" ]
 }
 
+install_hotplug_firewall_wdtt() {
+	local dest="/etc/hotplug.d/firewall/99-wdtt"
+
+	mkdir -p /etc/hotplug.d/firewall
+	cat > "$dest" <<'EOF'
+#!/bin/sh
+# Re-apply selective routing after fw4 reload (nft table wdtt is not managed by fw4)
+
+[ "$ACTION" = "reload" ] || exit 0
+[ -f /var/run/wdtt/routing.mode ] || exit 0
+
+routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+[ "$routing_mode" = "full" ] && exit 0
+[ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ] && exit 0
+
+iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+iface="${iface:-wg-wdtt}"
+
+logger -t wdtt-routing "firewall reload — re-applying selective routing on ${iface}"
+/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null
+
+exit 0
+EOF
+	chmod 0755 "$dest"
+	msg "  OK: hotplug firewall (inline)"
+}
+
 install_from_source() {
 	local arch goarch LUCI_VIEW
 
@@ -352,7 +379,7 @@ install_from_source() {
 	msg "Installing WDTT from GitHub (arch=${goarch})..."
 
 	mkdir -p /usr/sbin /usr/libexec/wdtt /var/run/wdtt \
-		/etc/init.d /etc/config /etc/hotplug.d/iface \
+		/etc/init.d /etc/config /etc/hotplug.d/iface /etc/hotplug.d/firewall \
 		/etc/uci-defaults /usr/share/luci/menu.d \
 		/usr/share/rpcd/acl.d /usr/libexec/rpcd 2>/dev/null || true
 
@@ -389,9 +416,7 @@ install_from_source() {
 	install_repo_file "luci-app-wdtt/root/etc/hotplug.d/iface/99-wdtt" /etc/hotplug.d/iface/99-wdtt "hotplug" || exit 1
 	chmod 0755 /etc/hotplug.d/iface/99-wdtt
 
-	install_repo_file "luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" \
-		/etc/hotplug.d/firewall/99-wdtt "hotplug-firewall" || exit 1
-	chmod 0755 /etc/hotplug.d/firewall/99-wdtt
+	install_hotplug_firewall_wdtt
 
 	install_repo_file "luci-app-wdtt/root/usr/libexec/rpcd/wdtt" /usr/libexec/rpcd/wdtt "rpcd" || exit 1
 	chmod 0755 /usr/libexec/rpcd/wdtt
