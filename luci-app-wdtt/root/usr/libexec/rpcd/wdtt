@@ -27,9 +27,13 @@ case "$1" in
 				json_init
 				json_add_array lines
 				if [ -f "$LOG_FILE" ]; then
-					tail -n "$tail" "$LOG_FILE" | while IFS= read -r line; do
+					# pipe + while runs in subshell — json_add_string теряется; читаем из файла
+					tmp="$(mktemp /tmp/wdtt-rpcd-log.XXXXXX)"
+					tail -n "$tail" "$LOG_FILE" > "$tmp"
+					while IFS= read -r line || [ -n "$line" ]; do
 						json_add_string "" "$line"
-					done
+					done < "$tmp"
+					rm -f "$tmp"
 				fi
 				json_close_array
 				json_dump
