@@ -191,6 +191,8 @@ cleanup_legacy_nft() {
 	# Старые версии клали table в nftables.d — ломает fw4 reload
 	rm -f "$NFT_HOOK_LEGACY"
 }
+
+cleanup_legacy_ipset() {
 	iptables -t mangle -D PREROUTING -j WDTT 2>/dev/null
 	iptables -t mangle -F WDTT 2>/dev/null
 	iptables -t mangle -X WDTT 2>/dev/null
