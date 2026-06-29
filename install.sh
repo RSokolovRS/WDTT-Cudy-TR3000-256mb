@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.2"
+WDTT_INSTALL_VERSION="3.6.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -438,7 +438,7 @@ routing_is_current() {
 
 	[ -f "$f" ] || return 1
 	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	grep -q 'WDTT_ROUTING_VERSION=3.6.2' "$f" 2>/dev/null \
+	grep -q 'WDTT_ROUTING_VERSION=3.6.3' "$f" 2>/dev/null \
 		&& grep -q 'parse_list_domain_line' "$f" 2>/dev/null \
 		&& grep -q 'remove_legacy_option_domains' "$f" 2>/dev/null \
 		&& return 0
@@ -449,11 +449,11 @@ ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: routing v3.6.2"
+		msg "  OK: routing v3.6.3"
 		return 0
 	fi
 
-	warn "Обновляем routing → v3.6.2 (принудительно)..."
+	warn "Обновляем routing → v3.6.3..."
 	if download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" 2>/dev/null; then
 		:
 	elif install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing"; then
@@ -466,7 +466,7 @@ ensure_routing_script() {
 	chmod 0755 "$dest"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: /usr/libexec/wdtt/routing (v3.6.2)"
+		msg "  OK: /usr/libexec/wdtt/routing (v3.6.3)"
 		return 0
 	fi
 
@@ -566,19 +566,19 @@ restore_wdtt_secrets() {
 }
 
 apply_clean_routing_defaults() {
+	local section
+
 	uci -q set wdtt.globals.routing_mode='selective'
 	uci -q set wdtt.globals.captcha_mode='wv'
-	uci -q set wdtt.youtube.enabled='1'
-	uci -q set wdtt.youtube.type='route'
 	sed -i '/^[[:space:]]*option domain[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
-	while uci -q delete wdtt.youtube.domain 2>/dev/null; do :; done
-	uci -q delete wdtt.youtube.domains 2>/dev/null
-	uci -q delete wdtt.youtube.list_url 2>/dev/null
-	uci add_list wdtt.youtube.domain='2ip.io'
-	uci add_list wdtt.youtube.domain='youtube.com'
-	uci -q commit wdtt
-	msg "Правила routing: 2ip.io, youtube.com (captcha_mode=wv)"
+	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\\.\\([^.=]*\\)=rule\$/\\1/p"); do
+		while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
+		uci -q delete "wdtt.${section}.domains" 2>/dev/null
+		uci -q delete "wdtt.${section}.list_url" 2>/dev/null
+	done
+	uci -q commit wdtt 2>/dev/null
+	msg "routing: captcha_mode=wv, домены пустые — добавьте в LuCI → Правила"
 }
 
 uninstall_wdtt() {
@@ -788,12 +788,12 @@ post_install() {
 	msg "   captcha_mode=wv — ручная капча (рекомендуется)"
 	msg ""
 	msg "2) Selective routing (после connected — автоматически):"
-	msg "   LuCI → правило route → Включено"
-	msg "   Домены: 2ip.io, youtube.com (без https://)"
+	msg "   LuCI → Правила маршрутизации → Домены (list domain)"
+	msg "   Пример: youtube.com, 2ip.io — только через LuCI, без option domain"
 	msg ""
 	msg "3) Проверка:"
 	msg "   /usr/libexec/wdtt/routing status"
-	msg "   nslookup 2ip.io 127.0.0.1"
+	msg "   nslookup example.com 127.0.0.1"
 	msg "   nft list set inet wdtt wdtt_route"
 	msg ""
 	msg "Quick start:"
@@ -802,9 +802,8 @@ post_install() {
 	msg "  uci set wdtt.globals.hashes='vk_hash'"
 	msg "  uci set wdtt.globals.captcha_mode='wv'"
 	msg "  uci set wdtt.globals.enabled='1'"
-	msg "  uci set wdtt.youtube.enabled='1'"
-	msg "  uci delete wdtt.youtube.domain 2>/dev/null"
-	msg "  uci add_list wdtt.youtube.domain='2ip.io'"
+	msg "  uci set wdtt.route1.enabled='1'"
+	msg "  uci add_list wdtt.route1.domain='youtube.com'"
 	msg "  uci commit wdtt && /etc/init.d/wdtt restart"
 }
 

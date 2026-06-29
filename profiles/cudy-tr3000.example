@@ -1,5 +1,5 @@
-# Профиль Cudy TR3000 256MB — пример конфигурации
-# Скопируйте: cp profiles/cudy-tr3000.example /etc/config/wdtt
+# Профиль Cudy TR3000 256MB — ОПЦИОНАЛЬНЫЙ пример (не ставится install.sh)
+# Скопируйте вручную: cp profiles/cudy-tr3000.example /etc/config/wdtt
 # Затем отредактируйте peer, password, hashes
 
 config globals 'globals'
@@ -11,7 +11,7 @@ config globals 'globals'
 	option mtu '1380'
 	option routing_mode 'selective'
 	option iface 'wg-wdtt'
-	option captcha_mode 'auto'
+	option captcha_mode 'wv'
 
 # Популярные сервисы через WDTT (включите нужные)
 config rule 'youtube'

@@ -9,21 +9,17 @@ config globals 'globals'
 	option listen '127.0.0.1:9000'
 	option turn_host ''
 	option turn_port ''
-	option captcha_mode 'auto'
+	option captcha_mode 'wv'
 	option device_id ''
 	option iface 'wg-wdtt'
 	# selective = как Podkop (списки в туннель, остальное напрямую)
 	# full = весь трафик роутера через WDTT
 	option routing_mode 'selective'
 
-# Пример: YouTube и Google Video через WDTT
-config rule 'youtube'
+# Пустое правило — домены добавьте в LuCI (DynamicList «Домены»), не option domain
+config rule 'route1'
 	option enabled '0'
 	option type 'route'
-	list domain 'youtube.com'
-	list domain 'googlevideo.com'
-	list domain 'ytimg.com'
-	list domain 'youtu.be'
 
 # Пример: конкретное устройство — весь его трафик через WDTT
 # config rule 'phone'

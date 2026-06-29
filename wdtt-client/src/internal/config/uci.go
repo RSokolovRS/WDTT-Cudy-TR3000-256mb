@@ -91,7 +91,7 @@ func Load(path string) (*Settings, error) {
 		Listen:      defaultString(g["listen"], "127.0.0.1:9000"),
 		TurnHost:    strings.TrimSpace(g["turn_host"]),
 		TurnPort:    strings.TrimSpace(g["turn_port"]),
-		CaptchaMode: defaultString(g["captcha_mode"], "auto"),
+		CaptchaMode: defaultString(g["captcha_mode"], "wv"),
 		DeviceID:    defaultString(g["device_id"], ""),
 		Iface:       defaultString(g["iface"], "wg-wdtt"),
 		Rules:       rules,

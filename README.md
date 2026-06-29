@@ -35,11 +35,11 @@ wget -O /tmp/wdtt-install.sh \
 sh /tmp/wdtt-install.sh --clean
 ```
 
-После `--clean`: `captcha_mode=wv`, домены `2ip.io` + `youtube.com`. Проверьте peer/password в LuCI → Подключить.
+После `--clean`: `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.5.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.6.3+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
-После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → правило **2ip.io** → Подключить.
+После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → **Правила** → добавьте домены → Включено → Подключить.
 
 Routing поднимается **авоматически** при `connected`. Проверка:
 
@@ -49,7 +49,7 @@ nslookup 2ip.io 127.0.0.1
 nft list set inet wdtt wdtt_route
 ```
 
-Если `wdtt_route` пуст — обновите routing-скрипт (v3.6.0+) и перезапустите:
+Если `wdtt_route` пуст — обновите routing-скрипт (v3.6.3+) и перезапустите:
 
 ```bash
 /usr/libexec/wdtt/routing reload wg-wdtt

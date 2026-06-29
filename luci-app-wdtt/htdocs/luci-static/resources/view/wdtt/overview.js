@@ -98,7 +98,7 @@ return view.extend({
 		o.value('auto', _('Авто (Go v2 + fallback)'));
 		o.value('rjs', _('RJS (только авто Go v2)'));
 		o.value('wv', _('WV (ручной — ссылка + токен)'));
-		o.default = 'auto';
+		o.default = 'wv';
 
 		o = s.option(form.ListValue, 'routing_mode', _('Маршрутизация'),
 			_('Selective — как Podkop: только выбранные домены/устройства через WDTT. Full — весь трафик.'));
@@ -130,7 +130,7 @@ return view.extend({
 		o.default = 'route';
 
 		o = s.option(form.DynamicList, 'domain', _('Домены'),
-			_('Например youtube.com — IP добавляется через dnsmasq nftset → nft.'));
+			_('Только list domain через LuCI. Пример: youtube.com, 2ip.io — без https:// и без option domain.'));
 		o.placeholder = 'example.com';
 
 		o = s.option(form.DynamicList, 'subnet', _('Подсети'), _('CIDR, например 203.0.113.0/24'));

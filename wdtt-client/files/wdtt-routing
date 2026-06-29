@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.6.2
+# WDTT_ROUTING_VERSION=3.6.3
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -502,7 +502,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.6.2"
+	log "starting selective routing (nft) on $IFACE v3.6.3"
 
 	ensure_dnsmasq_confdir
 	check_dnsmasq_nftset || return 1
@@ -564,11 +564,10 @@ do_status() {
 	echo "--- legacy option domain (must be empty) ---"
 	grep -E '^[[:space:]]*option domains?[[:space:]]' /etc/config/wdtt 2>/dev/null \
 		|| echo "(none — OK)"
-	echo "uci domain[0]=$(uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
+	echo "uci domain[0]=$(uci -q get wdtt.route1.domain[0] 2>/dev/null || uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
 	echo "file domain=$(grep -E 'domain|domains' /etc/config/wdtt 2>/dev/null | head -5)"
-	echo "--- /etc/config/wdtt (youtube) ---"
-	sed -n "/config rule 'youtube'/,/^config /p" /etc/config/wdtt 2>/dev/null | head -20
-	grep -E "domain|list_url" /etc/config/wdtt 2>/dev/null
+	echo "--- /etc/config/wdtt (rules) ---"
+	grep -E "^config rule|domain|list_url" /etc/config/wdtt 2>/dev/null | head -20
 	echo "--- $DNSMASQ_SNIPPET ---"
 	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
 		cat "$DNSMASQ_SNIPPET"
