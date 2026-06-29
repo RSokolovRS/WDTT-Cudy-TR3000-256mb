@@ -27,7 +27,17 @@ wget -O /tmp/wdtt-install.sh \
 sh /tmp/wdtt-install.sh
 ```
 
-Должно быть `WDTT installer v3.4.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+**Чистая переустановка** (удаление, очистка кэша, свежий конфиг; peer/password/hashes сохраняются):
+
+```bash
+wget -O /tmp/wdtt-install.sh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+sh /tmp/wdtt-install.sh --clean
+```
+
+После `--clean`: `captcha_mode=wv`, домены `2ip.io` + `youtube.com`. Проверьте peer/password в LuCI → Подключить.
+
+Должно быть `WDTT installer v3.5.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → правило **2ip.io** → Подключить → когда **connected**:
 

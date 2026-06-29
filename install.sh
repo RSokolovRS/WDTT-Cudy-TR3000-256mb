@@ -15,18 +15,19 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.4.7"
+WDTT_INSTALL_VERSION="3.5.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="8343a71"
+REPO_REF="5104d10"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v1.0.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
+SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
 HTTP_TIMEOUT=30
 
@@ -360,7 +361,9 @@ install_from_source() {
 	install_repo_file "luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt "init.d" || exit 1
 	chmod 0755 /etc/init.d/wdtt
 
-	install_repo_file "luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt "config" || exit 1
+	if [ "$WDTT_FRESH_CONFIG" = "1" ] || [ ! -f /etc/config/wdtt ]; then
+		install_repo_file "luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt "config" || exit 1
+	fi
 	install_repo_file "luci-app-wdtt/root/etc/firewall.wdtt" /etc/firewall.wdtt "firewall" || exit 1
 	chmod 0755 /etc/firewall.wdtt
 
@@ -473,6 +476,94 @@ verify_install() {
 	fi
 
 	return "$ok"
+}
+
+backup_wdtt_secrets() {
+	local f="$SECRETS_BACKUP"
+	rm -rf "$f"
+	mkdir -p "$f"
+	[ -f /etc/config/wdtt ] || return 0
+
+	msg "Сохраняем учётные данные WDTT..."
+	uci -q get wdtt.globals.peer 2>/dev/null > "$f/peer"
+	uci -q get wdtt.globals.password 2>/dev/null > "$f/password"
+	uci -q get wdtt.globals.hashes 2>/dev/null > "$f/hashes"
+	uci -q get wdtt.globals.enabled 2>/dev/null > "$f/enabled"
+	uci -q get wdtt.globals.captcha_mode 2>/dev/null > "$f/captcha_mode"
+	uci -q get wdtt.globals.workers 2>/dev/null > "$f/workers"
+	uci -q get wdtt.globals.routing_mode 2>/dev/null > "$f/routing_mode"
+}
+
+restore_wdtt_secrets() {
+	local f="$SECRETS_BACKUP" v
+
+	[ -d "$f" ] || return 0
+	[ -f /etc/config/wdtt ] || return 0
+
+	for v in peer password hashes enabled captcha_mode workers routing_mode; do
+		[ -f "$f/$v" ] || continue
+		[ -s "$f/$v" ] || continue
+		uci -q set "wdtt.globals.${v}=$(cat "$f/$v")"
+	done
+	uci -q commit wdtt 2>/dev/null
+	msg "Учётные данные WDTT восстановлены"
+}
+
+apply_clean_routing_defaults() {
+	uci -q set wdtt.globals.routing_mode='selective'
+	uci -q set wdtt.globals.captcha_mode='wv'
+	uci -q set wdtt.youtube.enabled='1'
+	uci -q set wdtt.youtube.type='route'
+	uci -q delete wdtt.youtube.domain 2>/dev/null
+	uci -q delete wdtt.youtube.domains 2>/dev/null
+	uci -q delete wdtt.youtube.list_url 2>/dev/null
+	uci add_list wdtt.youtube.domain='2ip.io'
+	uci add_list wdtt.youtube.domain='youtube.com'
+	uci -q commit wdtt
+	msg "Правила routing: 2ip.io, youtube.com (captcha_mode=wv)"
+}
+
+uninstall_wdtt() {
+	msg "============================================"
+	msg " WDTT: полное удаление и очистка кэша"
+	msg "============================================"
+
+	/etc/init.d/wdtt stop 2>/dev/null
+	/etc/init.d/wdtt disable 2>/dev/null
+	/usr/libexec/wdtt/routing stop 2>/dev/null
+
+	rm -f /usr/sbin/wdttd
+	rm -f /usr/libexec/wdtt/routing
+	rm -f /etc/init.d/wdtt
+	rm -f /etc/firewall.wdtt
+	rm -f /etc/uci-defaults/99-wdtt
+	rm -f /etc/hotplug.d/iface/99-wdtt
+	rm -f /usr/libexec/rpcd/wdtt
+	rm -f /usr/share/luci/menu.d/luci-app-wdtt.json
+	rm -f /usr/share/rpcd/acl.d/luci-app-wdtt.json
+	rm -f /www/luci-static/resources/view/wdtt/overview.js
+	rmdir /www/luci-static/resources/view/wdtt 2>/dev/null
+
+	rm -rf /var/run/wdtt
+	rm -f /tmp/dnsmasq.d/wdtt.conf
+	rm -f /etc/nftables.d/99-wdtt.nft
+	rm -rf /tmp/wdtt-install /tmp/wdtt-list.* /tmp/wdtt-rpcd-log.* 2>/dev/null
+	rm -rf /tmp/luci-* 2>/dev/null
+
+	if [ "$WDTT_FRESH_CONFIG" = "1" ]; then
+		rm -f /etc/config/wdtt
+		msg "  removed /etc/config/wdtt (fresh config on install)"
+	fi
+
+	ip rule del fwmark 0x777474 table 100 2>/dev/null
+	ip route flush table 100 2>/dev/null
+	nft delete table inet wdtt 2>/dev/null
+
+	/etc/init.d/dnsmasq reload 2>/dev/null || /etc/init.d/dnsmasq restart 2>/dev/null
+	/etc/init.d/firewall reload 2>/dev/null || true
+	/etc/init.d/rpcd restart 2>/dev/null || true
+
+	msg "WDTT удалён, кэш очищен"
 }
 
 fix_wdtt_legacy() {
@@ -607,7 +698,17 @@ install_dependencies() {
 
 post_install() {
 	if [ ! -f /etc/config/wdtt ]; then
-		download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt || true
+		download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt \
+			|| download_file "${JSDELIVR_PIN}/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt \
+			|| true
+	fi
+
+	if [ "$WDTT_KEEP_SECRETS" = "1" ] || [ "$WDTT_CLEAN" = "1" ]; then
+		restore_wdtt_secrets
+	fi
+
+	if [ "$WDTT_FRESH_CONFIG" = "1" ] || [ "$WDTT_CLEAN" = "1" ]; then
+		apply_clean_routing_defaults
 	fi
 
 	fix_wdtt_legacy
@@ -651,27 +752,51 @@ post_install() {
 }
 
 main() {
+	local arg
+
 	if [ "$(id -u)" != "0" ]; then
 		err "Run as root on the router"
 		exit 1
 	fi
 
+	for arg in "$@"; do
+		case "$arg" in
+			--clean|--reinstall)
+				WDTT_CLEAN=1
+				WDTT_KEEP_SECRETS=1
+				WDTT_FRESH_CONFIG=1
+				;;
+			--uninstall)
+				WDTT_UNINSTALL_ONLY=1
+				;;
+		esac
+	done
+
 	msg "WDTT installer v${WDTT_INSTALL_VERSION}"
+
+	if [ "$WDTT_UNINSTALL_ONLY" = "1" ]; then
+		backup_wdtt_secrets
+		WDTT_FRESH_CONFIG=1
+		uninstall_wdtt
+		rm -rf "$SECRETS_BACKUP"
+		exit 0
+	fi
 
 	rm -rf "$DOWNLOAD_DIR"
 	mkdir -p "$DOWNLOAD_DIR"
 
-	# КРИТИЧНО: починить wget до любых apk-операций
 	fix_broken_wget
+
+	if [ "$WDTT_CLEAN" = "1" ]; then
+		backup_wdtt_secrets
+		uninstall_wdtt
+		msg "Чистая установка WDTT..."
+	fi
 
 	check_system
 	check_github_access
 
-	if [ -f /etc/init.d/wdtt ]; then
-		msg "WDTT already installed — upgrading..."
-	else
-		msg "Installing WDTT..."
-	fi
+	msg "Installing WDTT..."
 
 	# Сразу ставим из GitHub (release .apk у нас нет — только бинарник)
 	warn "Installing from GitHub release..."
