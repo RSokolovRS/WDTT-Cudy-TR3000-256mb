@@ -15,12 +15,12 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.5.1"
+WDTT_INSTALL_VERSION="3.5.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="a15c5e9"
+REPO_REF="d7a5c52"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
@@ -511,7 +511,7 @@ backup_wdtt_secrets() {
 }
 
 restore_wdtt_secrets() {
-	local f="$SECRETS_BACKUP" v
+	local f="$SECRETS_BACKUP" v val
 
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
@@ -519,7 +519,11 @@ restore_wdtt_secrets() {
 	for v in peer password hashes enabled captcha_mode workers routing_mode; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
-		uci -q set "wdtt.globals.${v}=$(cat "$f/$v")"
+		val="$(cat "$f/$v")"
+		if [ "$v" = "hashes" ]; then
+			val="$(printf '%s' "$val" | tr '\n\r\t ' ',' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+		fi
+		uci -q set "wdtt.globals.${v}=${val}"
 	done
 	uci -q commit wdtt 2>/dev/null
 	msg "Учётные данные WDTT восстановлены"
