@@ -23,7 +23,7 @@ apk del wget-nossl
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a09d1f3@install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@732cd55@install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -33,7 +33,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 uclient-fetch -q -O /www/luci-static/resources/view/wdtt/overview.js \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a09d1f3@luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@732cd55@luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js
 rm -rf /tmp/luci-*
 ```
 
@@ -51,7 +51,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a09d1f3@install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@732cd55@install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -59,7 +59,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-bootstrap.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a09d1f3@bootstrap.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@732cd55@bootstrap.sh
 sh /tmp/wdtt-bootstrap.sh
 ```
 
