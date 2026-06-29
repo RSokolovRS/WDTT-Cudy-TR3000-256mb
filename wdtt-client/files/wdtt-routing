@@ -41,21 +41,42 @@ rule_is_enabled() {
 append_domain_nftset() {
 	local domain="$1"
 	domain="$(normalize_domain "$domain")"
+	case "$domain" in *" "*|*/*/*) return 0 ;; esac
 	[ -n "$domain" ] && echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
 }
 
-# Надёжное чтение UCI list (domain[0], domain[1], …)
+# Разбор UCI list: domain[0], domain[1] или 'a.com' 'b.com' в одной строке
+_split_uci_values() {
+	local raw="$1" callback="$2" part
+	[ -n "$raw" ] || return 0
+	raw="$(echo "$raw" | tr "'" " ")"
+	for part in $raw; do
+		[ -n "$part" ] && "$callback" "$part"
+	done
+}
+
 uci_foreach_list() {
-	local section="$1" option="$2" callback="$3" i=0 val
+	local section="$1" option="$2" callback="$3" i=0 val found=0 line quoted
 
 	while val="$(uci -q get wdtt.${section}.${option}[$i] 2>/dev/null)" && [ -n "$val" ]; do
 		"$callback" "$val"
+		found=1
 		i=$((i + 1))
 	done
 
-	if [ "$i" -eq 0 ]; then
+	if [ "$found" -eq 0 ]; then
+		for line in $(uci -q show "wdtt.${section}" 2>/dev/null | grep "^wdtt\.${section}\.${option}\["); do
+			val="${line#*=}"
+			val="${val#\'}"
+			val="${val%\'}"
+			[ -n "$val" ] && "$callback" "$val"
+			found=1
+		done
+	fi
+
+	if [ "$found" -eq 0 ]; then
 		val="$(uci -q get wdtt.${section}.${option} 2>/dev/null)"
-		[ -n "$val" ] && "$callback" "$val"
+		_split_uci_values "$val" "$callback"
 	fi
 }
 
