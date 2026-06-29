@@ -44,6 +44,21 @@ append_domain_nftset() {
 	[ -n "$domain" ] && echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
 }
 
+# Надёжное чтение UCI list (domain[0], domain[1], …)
+uci_foreach_list() {
+	local section="$1" option="$2" callback="$3" i=0 val
+
+	while val="$(uci -q get wdtt.${section}.${option}[$i] 2>/dev/null)" && [ -n "$val" ]; do
+		"$callback" "$val"
+		i=$((i + 1))
+	done
+
+	if [ "$i" -eq 0 ]; then
+		val="$(uci -q get wdtt.${section}.${option} 2>/dev/null)"
+		[ -n "$val" ] && "$callback" "$val"
+	fi
+}
+
 append_url_domains() {
 	local section="$1" list_url domain
 	list_url="$(uci -q get wdtt.${section}.list_url)"
@@ -66,7 +81,7 @@ build_dnsmasq() {
 
 	n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
 	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
-	[ "$n" -eq 0 ] && log "WARN: no domains — проверьте enabled=1 и list domain в правилах"
+	[ "$n" -eq 0 ] && log "WARN: no domains in wdtt.conf"
 }
 
 build_rule_dnsmasq() {
@@ -75,12 +90,12 @@ build_rule_dnsmasq() {
 	type="$(uci -q get wdtt.${section}.type)"
 	[ "$type" = "route" ] || return 0
 	rule_is_enabled "$section" || {
-		log "rule ${section}: enabled=0 — пропуск"
+		log "rule ${section}: enabled=0 — skip"
 		return 0
 	}
 
-	config_list_foreach "$section" domain append_domain_nftset
-	config_list_foreach "$section" domains append_domain_nftset
+	uci_foreach_list "$section" domain append_domain_nftset
+	uci_foreach_list "$section" domains append_domain_nftset
 	append_url_domains "$section"
 }
 
@@ -96,9 +111,8 @@ nft_add_src_ip()       { nft_add_one "$NFT_SET_SRC" "$1"; }
 nft_add_excl_ip()      { nft_add_one "$NFT_SET_EXCL" "$1"; }
 
 populate_nft_static() {
-	config_load wdtt
-	config_list_foreach globals routing_excluded_ip nft_add_excl_ip
-	config_list_foreach globals routing_excluded_ips nft_add_excl_ip
+	uci_foreach_list globals routing_excluded_ip nft_add_excl_ip
+	uci_foreach_list globals routing_excluded_ips nft_add_excl_ip
 	config_foreach populate_rule_nft rule
 }
 
@@ -110,14 +124,14 @@ populate_rule_nft() {
 
 	case "$type" in
 		route)
-			config_list_foreach "$section" subnet nft_add_route_subnet
-			config_list_foreach "$section" subnets nft_add_route_subnet
-			config_list_foreach "$section" source_ip nft_add_src_ip
-			config_list_foreach "$section" fully_routed_ip nft_add_src_ip
+			uci_foreach_list "$section" subnet nft_add_route_subnet
+			uci_foreach_list "$section" subnets nft_add_route_subnet
+			uci_foreach_list "$section" source_ip nft_add_src_ip
+			uci_foreach_list "$section" fully_routed_ip nft_add_src_ip
 			;;
 		exclusion)
-			config_list_foreach "$section" subnet nft_add_excl_subnet
-			config_list_foreach "$section" subnets nft_add_excl_subnet
+			uci_foreach_list "$section" subnet nft_add_excl_subnet
+			uci_foreach_list "$section" subnets nft_add_excl_subnet
 			;;
 	esac
 }
@@ -125,18 +139,15 @@ populate_rule_nft() {
 write_nft_hook() {
 	mkdir -p /etc/nftables.d
 	cat > "$NFT_HOOK" <<EOF
-# WDTT selective routing (managed by /usr/libexec/wdtt/routing)
 table ${NFT_FAMILY} ${NFT_TABLE} {
 	set ${NFT_SET_ROUTE} {
 		type ipv4_addr
 		flags interval
-		auto-merge
 	}
 
 	set ${NFT_SET_EXCL} {
 		type ipv4_addr
 		flags interval
-		auto-merge
 	}
 
 	set ${NFT_SET_SRC} {
@@ -145,7 +156,6 @@ table ${NFT_FAMILY} ${NFT_TABLE} {
 
 	chain prerouting {
 		type filter hook prerouting priority mangle; policy accept;
-
 		ip saddr @${NFT_SET_EXCL} return
 		ip daddr @${NFT_SET_EXCL} return
 		ip saddr @${NFT_SET_SRC} meta mark set ${MARK}
@@ -165,34 +175,39 @@ cleanup_legacy_ipset() {
 }
 
 setup_nft() {
+	local err
+
 	if ! command -v nft >/dev/null 2>&1; then
-		log "nft missing — apk add nftables kmod-nft-core"
+		log "ERROR: nft not found — apk add nftables kmod-nft-core"
+		echo "ERROR: apk add nftables kmod-nft-core" >&2
 		return 1
 	fi
+
+	modprobe nf_tables 2>/dev/null
 
 	cleanup_legacy_ipset
 	write_nft_hook
 	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
 
-	if [ -x /sbin/fw4 ]; then
-		fw4 reload 2>/dev/null || nft -f "$NFT_HOOK"
-	else
-		nft -f "$NFT_HOOK" 2>/dev/null
-	fi
+	err="$(nft -f "$NFT_HOOK" 2>&1)" || {
+		log "ERROR nft -f: $err"
+		echo "ERROR nft -f: $err" >&2
+		return 1
+	}
 
 	if ! nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1; then
-		log "ERROR: nft table $NFT_TABLE not loaded"
+		log "ERROR: table inet wdtt not loaded after nft -f"
+		echo "ERROR: table inet wdtt not loaded" >&2
 		return 1
 	fi
 
-	log "nft table $NFT_TABLE active"
+	log "nft table $NFT_TABLE loaded"
 	return 0
 }
 
 teardown_nft() {
 	rm -f "$NFT_HOOK"
 	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
-	[ -x /sbin/fw4 ] && fw4 reload 2>/dev/null
 	cleanup_legacy_ipset
 }
 
@@ -200,7 +215,9 @@ setup_policy_routing() {
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
 	ip rule add fwmark "$MARK" table "$TABLE" priority 10050
-	ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null
+	ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null || {
+		log "WARN: no route in table $TABLE for dev $IFACE (WireGuard up?)"
+	}
 }
 
 reload_dnsmasq() {
@@ -208,17 +225,27 @@ reload_dnsmasq() {
 }
 
 do_start() {
+	local rc=0
+
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	log "starting selective routing (nft) on $IFACE"
 
-	setup_nft || return 1
+	config_load wdtt
 	build_dnsmasq
-	populate_nft_static
-	setup_policy_routing
-	reload_dnsmasq
 
-	echo "selective" > "$STATE_DIR/routing.mode"
-	log "selective routing active (nft+nftset)"
+	setup_nft || rc=1
+	if [ "$rc" -eq 0 ]; then
+		populate_nft_static
+		setup_policy_routing
+		reload_dnsmasq
+		echo "selective" > "$STATE_DIR/routing.mode"
+		log "selective routing active"
+	else
+		rm -f "$STATE_DIR/routing.mode"
+		log "selective routing FAILED (see errors above)"
+	fi
+
+	return "$rc"
 }
 
 do_stop() {
@@ -252,6 +279,7 @@ do_status() {
 	echo "backend=nft+nftset"
 	echo "state_file=$(cat "$STATE_DIR/routing.mode" 2>/dev/null || echo missing)"
 	echo "dnsmasq_confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+	echo "nft=$(command -v nft || echo missing)"
 	echo "--- uci rules ---"
 	config_load wdtt
 	config_foreach show_rule_status rule
@@ -263,16 +291,12 @@ do_status() {
 		echo "($n nftset entries)"
 	else
 		echo "(empty)"
-		echo "FIX: uci set wdtt.youtube.enabled='1' && uci commit wdtt && routing reload wg-wdtt"
 	fi
-	echo "--- nft set $NFT_SET_ROUTE ---"
-	nft list set "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET_ROUTE" 2>/dev/null | head -20 \
-		|| echo "(missing — run: routing reload wg-wdtt)"
-	echo "--- nft chain prerouting ---"
-	nft list chain "$NFT_FAMILY" "$NFT_TABLE" prerouting 2>/dev/null | head -10 \
-		|| echo "(missing)"
+	echo "--- nft table ---"
+	nft list table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null | head -25 \
+		|| echo "(missing — run: routing reload wg-wdtt; check: logread | grep wdtt-routing)"
 	echo "--- ip rule ---"
-	ip rule | grep -F "$MARK" || echo "(no policy rule — tunnel/routing not started)"
+	ip rule | grep -F "$MARK" || echo "(no policy rule)"
 }
 
 case "$1" in
