@@ -1,5 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
+# WDTT_ROUTING_VERSION=3.6.1
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -20,6 +21,50 @@ NFT_HOOK="$STATE_DIR/wdtt.nft"
 NFT_HOOK_LEGACY="/etc/nftables.d/99-wdtt.nft"
 
 log() { logger -t wdtt-routing "$*"; }
+
+ensure_dnsmasq_confdir() {
+	[ -x /sbin/uci ] || return 0
+	uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1 || return 0
+	if ! uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null | grep -qF '/tmp/dnsmasq.d'; then
+		uci -q add_list dhcp.@dnsmasq[0].confdir='/tmp/dnsmasq.d' 2>/dev/null
+		uci -q commit dhcp 2>/dev/null
+		log "dnsmasq confdir: added /tmp/dnsmasq.d"
+	fi
+}
+
+check_dnsmasq_nftset() {
+	if ! command -v dnsmasq >/dev/null 2>&1; then
+		log "ERROR: dnsmasq not found"
+		echo "ERROR: dnsmasq not found" >&2
+		return 1
+	fi
+	if dnsmasq --version 2>/dev/null | grep -qi nftset; then
+		return 0
+	fi
+	log "ERROR: dnsmasq без nftset — apk add dnsmasq-full"
+	echo "ERROR: dnsmasq-full required for selective routing (nftset)" >&2
+	return 1
+}
+
+warmup_nftset_domains() {
+	local domain line warmed=0
+
+	[ -f "$DNSMASQ_SNIPPET" ] || return 0
+	while read -r line; do
+		domain="${line#nftset=/}"
+		domain="${domain%%/*}"
+		[ -n "$domain" ] || continue
+		if nslookup "$domain" 127.0.0.1 >/dev/null 2>&1; then
+			warmed=$((warmed + 1))
+			log "warmup dns: ${domain} OK"
+		else
+			log "WARN: warmup dns failed: ${domain}"
+		fi
+	done <<EOF
+$(grep '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null)
+EOF
+	log "warmup: ${warmed} domain(s) resolved into nftset"
+}
 
 NFTSET_SUFFIX="4#${NFT_FAMILY}#${NFT_TABLE}#"
 
@@ -42,7 +87,13 @@ rule_is_enabled() {
 append_domain_nftset() {
 	local domain="$1"
 	domain="$(normalize_domain "$domain")"
-	case "$domain" in *" "*|*/*/*) return 0 ;; esac
+	case "$domain" in
+	*" "*|*/*/*|list\ domain*|option\ domain*) return 0 ;;
+	esac
+	case "$domain" in
+	*.*) ;;
+	*) log "WARN: skip invalid domain: ${domain}"; return 0 ;;
+	esac
 	[ -n "$domain" ] || return 0
 	grep -qF "nftset=/${domain}/" "$DNSMASQ_SNIPPET" 2>/dev/null && return 0
 	echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
@@ -122,6 +173,42 @@ uci_line_value() {
 	printf '%s' "$val"
 }
 
+# Надёжный разбор list domain (не uci_line_value — ломался на некоторых конфигах)
+parse_list_domain_line() {
+	local line="$1" val
+	case "$line" in
+		list\ domain\ *|list\ domains\ *) ;;
+		*) return 1 ;;
+	esac
+	val="${line#list domain}"
+	val="${val#list domains}"
+	val="$(trim_line "$val")"
+	case "$val" in
+		\'*\')
+			val="${val#\'}"
+			val="${val%\'}"
+			;;
+		\"*\")
+			val="${val#\"}"
+			val="${val%\"}"
+			;;
+	esac
+	[ -n "$val" ] || return 1
+	printf '%s' "$val"
+}
+
+# Legacy option domain — источник ghost 2iw.io / yoltlbe.com; удаляем из файла
+remove_legacy_option_domains() {
+	local tmp
+	[ -r /etc/config/wdtt ] || return 0
+	grep -qE '^[[:space:]]*option domains?[[:space:]]' /etc/config/wdtt 2>/dev/null || return 0
+	tmp="$(mktemp /tmp/wdtt-cfg.XXXXXX)"
+	grep -Ev '^[[:space:]]*option domains?[[:space:]]' /etc/config/wdtt > "$tmp" \
+		|| { rm -f "$tmp"; return 0; }
+	mv "$tmp" /etc/config/wdtt
+	log "removed legacy option domain lines from /etc/config/wdtt"
+}
+
 trim_line() {
 	local line="$1"
 	line="${line#"${line%%[![:space:]]*}"}"
@@ -176,8 +263,9 @@ sync_wdtt_domains_uci() {
 		[ "$in_rule" -eq 1 ] || continue
 		case "$line" in
 			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
-				val="$(uci_line_value "$line")"
-				[ -n "$val" ] && domains="$domains $val" && count=$((count + 1))
+				val="$(parse_list_domain_line "$line")" || continue
+				domains="$domains $val"
+				count=$((count + 1))
 				;;
 		esac
 	done < /etc/config/wdtt
@@ -195,6 +283,8 @@ build_dnsmasq() {
 		log "ERROR: /etc/config/wdtt missing"
 		return 1
 	}
+
+	remove_legacy_option_domains
 
 	sync_wdtt_domains_uci
 
@@ -234,11 +324,11 @@ build_dnsmasq() {
 			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
 				[ "$type" = "route" ] || continue
 				[ "$enabled" = "0" ] && continue
-				val="$(uci_line_value "$line")"
+				val="$(parse_list_domain_line "$line")" || continue
 				append_domain_nftset "$val"
 				;;
 			option\ domain*|option\ domains*)
-				# LuCI пишет list domain; option domain — устаревшие опечатки (2iw.io)
+				log "WARN: ignoring legacy option domain line (use list domain)"
 				continue
 				;;
 			option\ list_url\ *)
@@ -397,9 +487,12 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE"
+	log "starting selective routing (nft) on $IFACE v3.6.0"
 
-	build_dnsmasq
+	ensure_dnsmasq_confdir
+	check_dnsmasq_nftset || return 1
+
+	build_dnsmasq || rc=1
 
 	setup_nft || rc=1
 	if [ "$rc" -eq 0 ]; then
@@ -407,6 +500,7 @@ do_start() {
 		populate_nft_static
 		setup_policy_routing
 		reload_dnsmasq
+		warmup_nftset_domains
 		echo "selective" > "$STATE_DIR/routing.mode"
 		log "selective routing active"
 	else
@@ -445,14 +539,16 @@ do_status() {
 	local mode n
 	mode="$(uci -q get wdtt.globals.routing_mode)"
 	echo "routing_mode=${mode:-?}"
-	echo "backend=nft+nftset"
+	echo "routing_script=$(grep -m1 'WDTT_ROUTING_VERSION=' /usr/libexec/wdtt/routing 2>/dev/null || echo unknown)"
 	echo "state_file=$(cat "$STATE_DIR/routing.mode" 2>/dev/null || echo missing)"
 	echo "dnsmasq_confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
 	echo "nft=$(command -v nft || echo missing)"
 	echo "--- uci rules ---"
 	config_load wdtt
 	config_foreach show_rule_status rule
-	echo "--- uci vs file (desync check) ---"
+	echo "--- legacy option domain (must be empty) ---"
+	grep -E '^[[:space:]]*option domains?[[:space:]]' /etc/config/wdtt 2>/dev/null \
+		|| echo "(none — OK)"
 	echo "uci domain[0]=$(uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
 	echo "file domain=$(grep -E 'domain|domains' /etc/config/wdtt 2>/dev/null | head -5)"
 	echo "--- /etc/config/wdtt (youtube) ---"
@@ -467,8 +563,10 @@ do_status() {
 		echo "(empty)"
 	fi
 	echo "--- nft table ---"
-	nft list table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null | head -25 \
+	nft list table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null | head -35 \
 		|| echo "(missing — run: routing reload wg-wdtt; check: logread | grep wdtt-routing)"
+	n="$(nft list set "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET_ROUTE" 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+' || echo 0)"
+	echo "wdtt_route IPs: ${n} (0 = warmup failed or no DNS yet)"
 	echo "--- ip route table $TABLE ---"
 	ip route show table "$TABLE" 2>/dev/null || echo "(empty — routing reload после connected)"
 	echo "--- firewall lan→wdtt ---"
@@ -477,17 +575,30 @@ do_status() {
 		|| echo "(missing — sh /etc/uci-defaults/99-wdtt)"
 }
 
+EXIT_RC=0
+
 case "$1" in
 	start)
 		routing_mode="$(uci -q get wdtt.globals.routing_mode)"
 		[ "$routing_mode" = "full" ] && exit 0
 		[ "$(uci -q get wdtt.globals.full_tunnel)" = "1" ] && exit 0
 		do_start
+		EXIT_RC=$?
 		;;
-	stop)   do_stop ;;
-	reload) do_reload ;;
-	status) do_status ;;
-	*)      echo "Usage: $0 {start|stop|reload|status} [iface]" >&2; exit 1 ;;
+	stop)
+		do_stop
+		;;
+	reload)
+		do_reload
+		EXIT_RC=$?
+		;;
+	status)
+		do_status
+		;;
+	*)
+		echo "Usage: $0 {start|stop|reload|status} [iface]" >&2
+		exit 1
+		;;
 esac
 
-exit 0
+exit "$EXIT_RC"

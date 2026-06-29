@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.5.2"
+WDTT_INSTALL_VERSION="3.6.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -389,6 +389,10 @@ install_from_source() {
 	install_repo_file "luci-app-wdtt/root/etc/hotplug.d/iface/99-wdtt" /etc/hotplug.d/iface/99-wdtt "hotplug" || exit 1
 	chmod 0755 /etc/hotplug.d/iface/99-wdtt
 
+	install_repo_file "luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" \
+		/etc/hotplug.d/firewall/99-wdtt "hotplug-firewall" || exit 1
+	chmod 0755 /etc/hotplug.d/firewall/99-wdtt
+
 	install_repo_file "luci-app-wdtt/root/usr/libexec/rpcd/wdtt" /usr/libexec/rpcd/wdtt "rpcd" || exit 1
 	chmod 0755 /usr/libexec/rpcd/wdtt
 
@@ -408,11 +412,8 @@ routing_is_current() {
 	local f="${1:-/usr/libexec/wdtt/routing}"
 
 	[ -f "$f" ] || return 1
-	# Legacy: table hook in nftables.d (ломает fw4)
 	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	# Current (df19062+): runtime nft + legacy cleanup
-	grep -q 'NFT_HOOK_LEGACY' "$f" 2>/dev/null && return 0
-	grep -q 'STATE_DIR/wdtt.nft' "$f" 2>/dev/null && return 0
+	grep -q 'WDTT_ROUTING_VERSION=3.6.1' "$f" 2>/dev/null && return 0
 	return 1
 }
 
@@ -420,10 +421,11 @@ ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
 
 	if routing_is_current "$dest"; then
+		msg "  OK: routing v3.6.1 (up to date)"
 		return 0
 	fi
 
-	warn "Обновляем routing (runtime nft, не nftables.d)..."
+	warn "Обновляем routing → v3.6.1 (ghost domains fix)..."
 	install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing" \
 		|| download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" "" \
 		|| return 1
@@ -534,7 +536,8 @@ apply_clean_routing_defaults() {
 	uci -q set wdtt.globals.captcha_mode='wv'
 	uci -q set wdtt.youtube.enabled='1'
 	uci -q set wdtt.youtube.type='route'
-	uci -q delete wdtt.youtube.domain 2>/dev/null
+	sed -i '/^[[:space:]]*option domains\?[[:space:]]/d' /etc/config/wdtt 2>/dev/null
+	while uci -q delete wdtt.youtube.domain 2>/dev/null; do :; done
 	uci -q delete wdtt.youtube.domains 2>/dev/null
 	uci -q delete wdtt.youtube.list_url 2>/dev/null
 	uci add_list wdtt.youtube.domain='2ip.io'
@@ -749,10 +752,9 @@ post_install() {
 	msg "   peer, password, VK-hashes, enabled=1"
 	msg "   captcha_mode=wv — ручная капча (рекомендуется)"
 	msg ""
-	msg "2) Selective routing (после connected):"
+	msg "2) Selective routing (после connected — автоматически):"
 	msg "   LuCI → правило route → Включено"
-	msg "   Домены: 2ip.io (без https://, без опечаток)"
-	msg "   После connected: routing reload wg-wdtt"
+	msg "   Домены: 2ip.io, youtube.com (без https://)"
 	msg ""
 	msg "3) Проверка:"
 	msg "   /usr/libexec/wdtt/routing status"

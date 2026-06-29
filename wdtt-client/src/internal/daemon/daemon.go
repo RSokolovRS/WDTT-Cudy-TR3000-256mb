@@ -174,15 +174,16 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				log.Printf("[WDTT] WireGuard apply failed: %v", err)
 				d.status.SetError(err)
 			} else {
+				var routingErr error
 				if d.cfg != nil && d.cfg.IsSelective() {
 					if err := routing.Start(d.wg.Iface(), d.cfg); err != nil {
 						log.Printf("[WDTT] selective routing failed: %v", err)
-						d.status.SetError(err)
+						routingErr = err
 					}
 				}
 				d.status.SetWGApplied(true)
 				d.status.SetState("connected")
-				d.status.SetError(nil)
+				d.status.SetError(routingErr)
 				log.Printf("[WDTT] WireGuard %s up (mode=%s)", d.wg.Iface(), mode)
 			}
 		case "captcha_required":

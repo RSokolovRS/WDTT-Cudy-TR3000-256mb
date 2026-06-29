@@ -39,7 +39,17 @@ sh /tmp/wdtt-install.sh --clean
 
 Должно быть `WDTT installer v3.5.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
-После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → правило **2ip.io** → Подключить → когда **connected**:
+После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → правило **2ip.io** → Подключить.
+
+Routing поднимается **авоматически** при `connected`. Проверка:
+
+```bash
+/usr/libexec/wdtt/routing status
+nslookup 2ip.io 127.0.0.1
+nft list set inet wdtt wdtt_route
+```
+
+Если `wdtt_route` пуст — обновите routing-скрипт (v3.6.0+) и перезапустите:
 
 ```bash
 /usr/libexec/wdtt/routing reload wg-wdtt

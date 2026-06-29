@@ -1,0 +1,17 @@
+#!/bin/sh
+# Re-apply selective routing after fw4 reload (nft table wdtt is not managed by fw4)
+
+[ "$ACTION" = "reload" ] || exit 0
+[ -f /var/run/wdtt/routing.mode ] || exit 0
+
+routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+[ "$routing_mode" = "full" ] && exit 0
+[ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ] && exit 0
+
+iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+iface="${iface:-wg-wdtt}"
+
+logger -t wdtt-routing "firewall reload — re-applying selective routing on ${iface}"
+/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null
+
+exit 0
