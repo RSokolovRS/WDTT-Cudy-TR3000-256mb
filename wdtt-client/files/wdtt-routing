@@ -84,57 +84,18 @@ uci_foreach_list() {
 	fi
 }
 
-# list domain/domains — только list/option строки из /etc/config/wdtt (без config_get: он тянет legacy option)
-read_rule_domains_from_file() {
-	local section="$1" line val in=0
+append_url_domains_raw() {
+	local list_url="$1" domain tmp
 
-	while read -r line; do
-		case "$line" in
-			"config rule '${section}'"|"config rule \"${section}\""|"config rule ${section}")
-				in=1
-				continue
-				;;
-			config\ *)
-				[ "$in" -eq 1 ] && break
-				in=0
-				;;
-		esac
-		[ "$in" -eq 1 ] || continue
-		case "$line" in
-			*"list domain "*|*"list domains "*)
-				val="${line#*\'}"
-				val="${val%%\'*}"
-				append_domain_nftset "$val"
-				;;
-			*"option domain "*|*"option domains "*)
-				val="${line#*\'}"
-				val="${val%%\'*}"
-				_split_uci_values "$val" append_domain_nftset
-				;;
-		esac
-	done < /etc/config/wdtt
-}
-
-# uci list — дополнительно (если файл ещё не записан)
-read_rule_domains_from_uci() {
-	local section="$1"
-	uci_foreach_list "$section" domain append_domain_nftset
-	uci_foreach_list "$section" domains append_domain_nftset
-}
-
-append_url_domains() {
-	local section="$1" list_url domain tmp
-
-	list_url="$(uci -q get wdtt.${section}.list_url)"
 	[ -n "$list_url" ] || return 0
 	case "$list_url" in
 		http://*|https://*) ;;
 		*)
-			log "skip invalid list_url for ${section}: ${list_url}"
+			log "skip invalid list_url: ${list_url}"
 			return 0
 			;;
 	esac
-	log "list_url ${section}: ${list_url}"
+	log "list_url fetch: ${list_url}"
 	tmp="$(mktemp /tmp/wdtt-list.XXXXXX)"
 	wget -qO "$tmp" "$list_url" 2>/dev/null || {
 		rm -f "$tmp"
@@ -148,35 +109,95 @@ append_url_domains() {
 	rm -f "$tmp"
 }
 
+uci_line_value() {
+	local line="$1" val
+	val="${line#*\'}"
+	if [ "$val" != "$line" ]; then
+		val="${val%%\'*}"
+		printf '%s' "$val"
+		return 0
+	fi
+	val="${line#*\"}"
+	val="${val%%\"*}"
+	printf '%s' "$val"
+}
+
+trim_line() {
+	local line="$1"
+	line="${line#"${line%%[![:space:]]*}"}"
+	line="${line%"${line##*[![:space:]]}"}"
+	printf '%s' "$line"
+}
+
+# Только /etc/config/wdtt — uci get может расходиться после sed (stale 2iw.io)
 build_dnsmasq() {
-	local n=0 section
+	local line section="" type="route" enabled="1" in_rule=0 val n=0
 
 	mkdir -p "$(dirname "$DNSMASQ_SNIPPET")"
 	: > "$DNSMASQ_SNIPPET"
 
-	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\\.\\([^.=]*\\)=rule\$/\\1/p"); do
-		build_rule_dnsmasq "$section"
-	done
+	[ -r /etc/config/wdtt ] || {
+		log "ERROR: /etc/config/wdtt missing"
+		return 1
+	}
+
+	while read -r line || [ -n "$line" ]; do
+		line="$(trim_line "$line")"
+		case "$line" in
+			""|\#*) continue ;;
+			config\ rule\ *)
+				section="${line#config rule }"
+				section="${section#\'}"; section="${section%%\'*}"
+				if [ "$section" = "${line#config rule }" ]; then
+					section="${section#\"}"; section="${section%%\"*}"
+				fi
+				section="${section%% *}"
+				type="route"
+				enabled="1"
+				in_rule=1
+				log "rule ${section}: scan /etc/config/wdtt"
+				continue
+				;;
+			config\ *)
+				in_rule=0
+				section=""
+				continue
+				;;
+		esac
+
+		[ "$in_rule" -eq 1 ] || continue
+
+		case "$line" in
+			option\ type\ *)
+				type="$(uci_line_value "$line")"
+				;;
+			option\ enabled\ *)
+				enabled="$(uci_line_value "$line")"
+				;;
+			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
+				[ "$type" = "route" ] || continue
+				[ "$enabled" = "0" ] && continue
+				val="$(uci_line_value "$line")"
+				append_domain_nftset "$val"
+				;;
+			option\ domain|option\ domain\ *|option\ domains|option\ domains\ *)
+				[ "$type" = "route" ] || continue
+				[ "$enabled" = "0" ] && continue
+				val="$(uci_line_value "$line")"
+				_split_uci_values "$val" append_domain_nftset
+				;;
+			option\ list_url\ *)
+				[ "$type" = "route" ] || continue
+				[ "$enabled" = "0" ] && continue
+				val="$(uci_line_value "$line")"
+				append_url_domains_raw "$val"
+				;;
+		esac
+	done < /etc/config/wdtt
 
 	n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
 	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
 	[ "$n" -eq 0 ] && log "WARN: no domains in wdtt.conf"
-}
-
-build_rule_dnsmasq() {
-	local section="$1" type
-
-	type="$(uci -q get wdtt.${section}.type)"
-	[ "$type" = "route" ] || return 0
-	rule_is_enabled "$section" || {
-		log "rule ${section}: enabled=0 — skip"
-		return 0
-	}
-
-	log "rule ${section}: load domains"
-	read_rule_domains_from_file "$section"
-	read_rule_domains_from_uci "$section"
-	append_url_domains "$section"
 }
 
 nft_add_one() {
@@ -370,7 +391,9 @@ do_status() {
 	echo "--- uci rules ---"
 	config_load wdtt
 	config_foreach show_rule_status rule
-	uci show wdtt.youtube 2>/dev/null || true
+	echo "--- uci vs file (desync check) ---"
+	echo "uci domain[0]=$(uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
+	echo "file domain=$(grep -E 'domain|domains' /etc/config/wdtt 2>/dev/null | head -5)"
 	echo "--- /etc/config/wdtt (youtube) ---"
 	sed -n "/config rule 'youtube'/,/^config /p" /etc/config/wdtt 2>/dev/null | head -20
 	grep -E "domain|list_url" /etc/config/wdtt 2>/dev/null
