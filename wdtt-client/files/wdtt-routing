@@ -20,7 +20,6 @@ STATE_DIR=/var/run/wdtt
 
 log() { logger -t wdtt-routing "$*"; }
 
-# dnsmasq: nftset=/domain/4#inet#wdtt#wdtt_route
 NFTSET_SUFFIX="4#${NFT_FAMILY}#${NFT_TABLE}#"
 
 normalize_domain() {
@@ -32,47 +31,28 @@ normalize_domain() {
 	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
 }
 
-uci_list() {
-	local section="$1" option="$2"
-	uci -q show "wdtt.${section}.${option}" 2>/dev/null | \
-		sed -n "s/^wdtt\.${section}\.${option}\(=\|\[\d\+\]=\)//p" | \
-		sed "s/^'//;s/'$//"
+rule_is_enabled() {
+	local section="$1" enabled
+	enabled="$(uci -q get wdtt.${section}.enabled)"
+	[ "$enabled" = "0" ] && return 1
+	return 0
 }
 
-collect_domains() {
-	local section="$1" type="$2" list_url domain
+append_domain_nftset() {
+	local domain="$1"
+	domain="$(normalize_domain "$domain")"
+	[ -n "$domain" ] && echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
+}
 
-	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
-	[ "$(uci -q get wdtt.${section}.type)" != "$type" ] && return 0
-
+append_url_domains() {
+	local section="$1" list_url domain
 	list_url="$(uci -q get wdtt.${section}.list_url)"
-	if [ -n "$list_url" ]; then
-		wget -qO- "$list_url" 2>/dev/null | while read -r domain; do
-			domain="${domain%%#*}"
-			domain="$(echo "$domain" | tr -d '[:space:]')"
-			domain="$(normalize_domain "$domain")"
-			[ -n "$domain" ] && echo "$domain"
-		done
-	fi
-
-	uci_list "$section" domain
-	uci_list "$section" domains
-}
-
-collect_subnets() {
-	local section="$1" type="$2"
-	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
-	[ "$(uci -q get wdtt.${section}.type)" != "$type" ] && return 0
-	uci_list "$section" subnet
-	uci_list "$section" subnets
-}
-
-collect_source_ips() {
-	local section="$1"
-	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
-	[ "$(uci -q get wdtt.${section}.type)" != "route" ] && return 0
-	uci_list "$section" source_ip
-	uci_list "$section" fully_routed_ip
+	[ -n "$list_url" ] || return 0
+	wget -qO- "$list_url" 2>/dev/null | while read -r domain; do
+		domain="${domain%%#*}"
+		domain="$(echo "$domain" | tr -d '[:space:]')"
+		append_domain_nftset "$domain"
+	done
 }
 
 build_dnsmasq() {
@@ -86,19 +66,22 @@ build_dnsmasq() {
 
 	n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
 	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
+	[ "$n" -eq 0 ] && log "WARN: no domains — проверьте enabled=1 и list domain в правилах"
 }
 
 build_rule_dnsmasq() {
-	local section="$1" type domain
+	local section="$1" type
 
 	type="$(uci -q get wdtt.${section}.type)"
 	[ "$type" = "route" ] || return 0
-	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+	rule_is_enabled "$section" || {
+		log "rule ${section}: enabled=0 — пропуск"
+		return 0
+	}
 
-	collect_domains "$section" route | while read -r domain; do
-		domain="$(normalize_domain "$domain")"
-		[ -n "$domain" ] && echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
-	done
+	config_list_foreach "$section" domain append_domain_nftset
+	config_list_foreach "$section" domains append_domain_nftset
+	append_url_domains "$section"
 }
 
 nft_add_one() {
@@ -107,17 +90,15 @@ nft_add_one() {
 	nft add element "$NFT_FAMILY" "$NFT_TABLE" "$setname" "{ $elem }" 2>/dev/null
 }
 
+nft_add_route_subnet() { nft_add_one "$NFT_SET_ROUTE" "$1"; }
+nft_add_excl_subnet()  { nft_add_one "$NFT_SET_EXCL" "$1"; }
+nft_add_src_ip()       { nft_add_one "$NFT_SET_SRC" "$1"; }
+nft_add_excl_ip()      { nft_add_one "$NFT_SET_EXCL" "$1"; }
+
 populate_nft_static() {
-	local section type subnet ip
-
-	uci_list globals routing_excluded_ip | while read -r ip; do
-		nft_add_one "$NFT_SET_EXCL" "$ip"
-	done
-	uci_list globals routing_excluded_ips | while read -r ip; do
-		nft_add_one "$NFT_SET_EXCL" "$ip"
-	done
-
 	config_load wdtt
+	config_list_foreach globals routing_excluded_ip nft_add_excl_ip
+	config_list_foreach globals routing_excluded_ips nft_add_excl_ip
 	config_foreach populate_rule_nft rule
 }
 
@@ -125,21 +106,18 @@ populate_rule_nft() {
 	local section="$1" type
 
 	type="$(uci -q get wdtt.${section}.type)"
-	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
+	rule_is_enabled "$section" || return 0
 
 	case "$type" in
 		route)
-			collect_subnets "$section" route | while read -r subnet; do
-				nft_add_one "$NFT_SET_ROUTE" "$subnet"
-			done
-			collect_source_ips "$section" | while read -r ip; do
-				nft_add_one "$NFT_SET_SRC" "$ip"
-			done
+			config_list_foreach "$section" subnet nft_add_route_subnet
+			config_list_foreach "$section" subnets nft_add_route_subnet
+			config_list_foreach "$section" source_ip nft_add_src_ip
+			config_list_foreach "$section" fully_routed_ip nft_add_src_ip
 			;;
 		exclusion)
-			collect_subnets "$section" exclusion | while read -r subnet; do
-				nft_add_one "$NFT_SET_EXCL" "$subnet"
-			done
+			config_list_foreach "$section" subnet nft_add_excl_subnet
+			config_list_foreach "$section" subnets nft_add_excl_subnet
 			;;
 	esac
 }
@@ -178,7 +156,6 @@ EOF
 }
 
 cleanup_legacy_ipset() {
-	# Старые версии скрипта
 	iptables -t mangle -D PREROUTING -j WDTT 2>/dev/null
 	iptables -t mangle -F WDTT 2>/dev/null
 	iptables -t mangle -X WDTT 2>/dev/null
@@ -195,7 +172,6 @@ setup_nft() {
 
 	cleanup_legacy_ipset
 	write_nft_hook
-
 	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
 
 	if [ -x /sbin/fw4 ]; then
@@ -209,7 +185,7 @@ setup_nft() {
 		return 1
 	fi
 
-	log "nft table $NFT_TABLE active (fw4)"
+	log "nft table $NFT_TABLE active"
 	return 0
 }
 
@@ -223,7 +199,6 @@ teardown_nft() {
 setup_policy_routing() {
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
-
 	ip rule add fwmark "$MARK" table "$TABLE" priority 10050
 	ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null
 }
@@ -236,11 +211,7 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	log "starting selective routing (nft) on $IFACE"
 
-	setup_nft || {
-		log "ERROR: nft setup failed"
-		return 1
-	}
-
+	setup_nft || return 1
 	build_dnsmasq
 	populate_nft_static
 	setup_policy_routing
@@ -252,7 +223,6 @@ do_start() {
 
 do_stop() {
 	log "stopping selective routing"
-
 	teardown_nft
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
@@ -267,6 +237,14 @@ do_reload() {
 	do_start
 }
 
+show_rule_status() {
+	local section="$1" type enabled
+	type="$(uci -q get wdtt.${section}.type)"
+	enabled="$(uci -q get wdtt.${section}.enabled)"
+	[ -z "$enabled" ] && enabled="(unset→on)"
+	echo "  rule ${section}: type=${type:-?} enabled=${enabled}"
+}
+
 do_status() {
 	local mode n
 	mode="$(uci -q get wdtt.globals.routing_mode)"
@@ -275,23 +253,26 @@ do_status() {
 	echo "state_file=$(cat "$STATE_DIR/routing.mode" 2>/dev/null || echo missing)"
 	echo "dnsmasq_confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
 	echo "--- uci rules ---"
-	uci show wdtt 2>/dev/null | grep -E 'rule|domain|enabled|type' || true
+	config_load wdtt
+	config_foreach show_rule_status rule
+	uci show wdtt 2>/dev/null | grep -E '\.domain|\.subnet' || true
 	echo "--- $DNSMASQ_SNIPPET ---"
 	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
 		cat "$DNSMASQ_SNIPPET"
 		n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET")"
 		echo "($n nftset entries)"
 	else
-		echo "(empty — включите rule route + domain, затем: routing reload wg-wdtt)"
+		echo "(empty)"
+		echo "FIX: uci set wdtt.youtube.enabled='1' && uci commit wdtt && routing reload wg-wdtt"
 	fi
 	echo "--- nft set $NFT_SET_ROUTE ---"
 	nft list set "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET_ROUTE" 2>/dev/null | head -20 \
-		|| echo "(missing — routing start failed?)"
+		|| echo "(missing — run: routing reload wg-wdtt)"
 	echo "--- nft chain prerouting ---"
 	nft list chain "$NFT_FAMILY" "$NFT_TABLE" prerouting 2>/dev/null | head -10 \
 		|| echo "(missing)"
 	echo "--- ip rule ---"
-	ip rule | grep -F "$MARK" || echo "(no policy rule)"
+	ip rule | grep -F "$MARK" || echo "(no policy rule — tunnel/routing not started)"
 }
 
 case "$1" in
