@@ -1,20 +1,19 @@
 #!/bin/sh
 # WDTT selective routing — policy routing как в Podkop
-# Приоритет: routing_excluded_ips > fully_routed_ips > domain/subnet lists
+# dnsmasq ipset → iptables/nft mark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
 
 MARK=0x777474
 TABLE=100
-TABLE_NAME=wdtt
 IFACE="${2:-wg-wdtt}"
 
 IPSET_ROUTE=wdtt_route
 IPSET_EXCL=wdtt_excl
 IPSET_SRC=wdtt_src
+IPT_CHAIN=WDTT
 
 DNSMASQ_SNIPPET=/tmp/dnsmasq.d/wdtt.conf
-NFT_HOOK=/etc/nftables.d/99-wdtt.nft
 STATE_DIR=/var/run/wdtt
 
 log() { logger -t wdtt-routing "$*"; }
@@ -29,18 +28,19 @@ normalize_domain() {
 	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
 }
 
-ipset_create() {
-	local name="$1"
-	ipset destroy "$name" 2>/dev/null
-	ipset create "$name" hash:net family inet hashsize 4096 maxelem 65536 2>/dev/null || \
-	ipset flush "$name" 2>/dev/null
-}
-
+# UCI list: domain='x' и domain[0]='x'
 uci_list() {
 	local section="$1" option="$2"
 	uci -q show "wdtt.${section}.${option}" 2>/dev/null | \
 		sed -n "s/^wdtt\.${section}\.${option}\(=\|\[\d\+\]=\)//p" | \
 		sed "s/^'//;s/'$//"
+}
+
+ipset_create() {
+	local name="$1"
+	ipset destroy "$name" 2>/dev/null
+	ipset create "$name" hash:net family inet hashsize 4096 maxelem 65536 2>/dev/null || \
+		ipset flush "$name" 2>/dev/null
 }
 
 collect_domains() {
@@ -54,36 +54,42 @@ collect_domains() {
 		wget -qO- "$list_url" 2>/dev/null | while read -r domain; do
 			domain="${domain%%#*}"
 			domain="$(echo "$domain" | tr -d '[:space:]')"
+			domain="$(normalize_domain "$domain")"
 			[ -n "$domain" ] && echo "$domain"
 		done
 	fi
 
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.domain\[\d\+\]='\(.*\)'$/\1/p"
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.domains\[\d\+\]='\(.*\)'$/\1/p"
+	uci_list "$section" domain
+	uci_list "$section" domains
 }
 
 collect_subnets() {
 	local section="$1" type="$2"
 	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
 	[ "$(uci -q get wdtt.${section}.type)" != "$type" ] && return 0
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.subnet\[\d\+\]='\(.*\)'$/\1/p"
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.subnets\[\d\+\]='\(.*\)'$/\1/p"
+	uci_list "$section" subnet
+	uci_list "$section" subnets
 }
 
 collect_source_ips() {
 	local section="$1"
 	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
 	[ "$(uci -q get wdtt.${section}.type)" != "route" ] && return 0
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.source_ip\[\d\+\]='\(.*\)'$/\1/p"
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.${section}\.fully_routed_ip\[\d\+\]='\(.*\)'$/\1/p"
+	uci_list "$section" source_ip
+	uci_list "$section" fully_routed_ip
 }
 
 build_dnsmasq() {
+	local section domain n=0
+
 	mkdir -p "$(dirname "$DNSMASQ_SNIPPET")"
 	: > "$DNSMASQ_SNIPPET"
 
 	config_load wdtt
 	config_foreach build_rule_dnsmasq rule
+
+	n="$(grep -c '^ipset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
+	log "dnsmasq: ${n} domain(s) in $DNSMASQ_SNIPPET"
 }
 
 build_rule_dnsmasq() {
@@ -100,19 +106,14 @@ build_rule_dnsmasq() {
 }
 
 populate_ipsets() {
-	local section subnet ip
-
 	ipset_create "$IPSET_ROUTE"
 	ipset_create "$IPSET_EXCL"
 	ipset_create "$IPSET_SRC"
 
-	# Исключённые устройства (всегда напрямую) — в globals
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.globals\.routing_excluded_ip\[\d\+\]='\(.*\)'$/\1/p" | \
-	while read -r ip; do
+	uci_list globals routing_excluded_ip | while read -r ip; do
 		[ -n "$ip" ] && ipset add "$IPSET_EXCL" "$ip" 2>/dev/null
 	done
-	uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.globals\.routing_excluded_ips\[\d\+\]='\(.*\)'$/\1/p" | \
-	while read -r ip; do
+	uci_list globals routing_excluded_ips | while read -r ip; do
 		[ -n "$ip" ] && ipset add "$IPSET_EXCL" "$ip" 2>/dev/null
 	done
 
@@ -121,7 +122,7 @@ populate_ipsets() {
 }
 
 populate_rule_ipsets() {
-	local section="$1" type subnet ip
+	local section="$1" type
 
 	type="$(uci -q get wdtt.${section}.type)"
 	[ "$(uci -q get wdtt.${section}.enabled)" = "0" ] && return 0
@@ -143,42 +144,38 @@ populate_rule_ipsets() {
 	esac
 }
 
-setup_nft() {
-	mkdir -p /etc/nftables.d
-	cat > "$NFT_HOOK" <<EOF
-table inet wdtt {
-	chain prerouting {
-		type filter hook prerouting priority mangle; policy accept;
+# ipset создаётся через `ipset`, nft @name — это nft-set (другой тип). Используем iptables mangle.
+setup_mark_rules() {
+	if ! command -v iptables >/dev/null 2>&1; then
+		log "iptables missing — apk add iptables iptables-mod-ipset"
+		return 1
+	fi
 
-		# Исключения — не маркируем (идут напрямую)
-		ip saddr @${IPSET_EXCL} return
-		ip daddr @${IPSET_EXCL} return
+	iptables -t mangle -N "$IPT_CHAIN" 2>/dev/null || iptables -t mangle -F "$IPT_CHAIN"
+	iptables -t mangle -D PREROUTING -j "$IPT_CHAIN" 2>/dev/null
 
-		# Устройства с полной маршрутизацией через WDTT
-		ip saddr @${IPSET_SRC} meta mark set ${MARK}
+	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_EXCL" src -j RETURN 2>/dev/null
+	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_EXCL" dst -j RETURN 2>/dev/null
+	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_SRC" src -j MARK --set-mark "$MARK" 2>/dev/null
+	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_ROUTE" dst -j MARK --set-mark "$MARK" 2>/dev/null
+	iptables -t mangle -I PREROUTING 1 -j "$IPT_CHAIN" 2>/dev/null
 
-		# Домены/подсети из списков
-		ip daddr @${IPSET_ROUTE} meta mark set ${MARK}
-	}
+	log "iptables mangle chain $IPT_CHAIN active"
+	return 0
 }
-EOF
 
-	nft -f "$NFT_HOOK" 2>/dev/null || fw4 reload 2>/dev/null
+teardown_mark_rules() {
+	iptables -t mangle -D PREROUTING -j "$IPT_CHAIN" 2>/dev/null
+	iptables -t mangle -F "$IPT_CHAIN" 2>/dev/null
+	iptables -t mangle -X "$IPT_CHAIN" 2>/dev/null
 }
 
 setup_policy_routing() {
-	local wan_gw
-
-	# Очистка старых правил
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
 
 	ip rule add fwmark "$MARK" table "$TABLE" priority 10050
 	ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null
-
-	# LAN → WDTT forwarding
-	wan_gw="$(ip route show default | awk '/default/ {print $3; exit}')"
-	[ -n "$wan_gw" ] && ip route add default via "$wan_gw" table main 2>/dev/null
 }
 
 reload_dnsmasq() {
@@ -191,7 +188,7 @@ do_start() {
 
 	build_dnsmasq
 	populate_ipsets
-	setup_nft
+	setup_mark_rules || log "WARN: mark rules failed (install iptables-mod-ipset kmod-ipt-ipset)"
 	setup_policy_routing
 	reload_dnsmasq
 
@@ -202,11 +199,11 @@ do_start() {
 do_stop() {
 	log "stopping selective routing"
 
+	teardown_mark_rules
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
 
-	nft delete table inet wdtt 2>/dev/null
-	rm -f "$NFT_HOOK" "$DNSMASQ_SNIPPET"
+	rm -f "$DNSMASQ_SNIPPET"
 
 	ipset destroy "$IPSET_ROUTE" 2>/dev/null
 	ipset destroy "$IPSET_EXCL" 2>/dev/null
@@ -223,21 +220,25 @@ do_reload() {
 }
 
 do_status() {
-	local mode
+	local mode n
 	mode="$(uci -q get wdtt.globals.routing_mode)"
 	echo "routing_mode=${mode:-?}"
 	echo "state_file=$(cat "$STATE_DIR/routing.mode" 2>/dev/null || echo missing)"
 	echo "dnsmasq_confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+	echo "--- uci rules ---"
+	uci show wdtt 2>/dev/null | grep -E 'rule|domain|enabled|type' || true
 	echo "--- $DNSMASQ_SNIPPET ---"
 	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
 		cat "$DNSMASQ_SNIPPET"
+		n="$(grep -c '^ipset=' "$DNSMASQ_SNIPPET")"
+		echo "($n entries)"
 	else
-		echo "(empty — включите правило route + домен, затем: routing reload wg-wdtt)"
+		echo "(empty)"
 	fi
 	echo "--- ipset $IPSET_ROUTE ---"
-	ipset list "$IPSET_ROUTE" 2>/dev/null | head -25 || echo "(ipset missing — apk add ipset)"
-	echo "--- nft wdtt ---"
-	nft list table inet wdtt 2>/dev/null | head -15 || echo "(nft table missing)"
+	ipset list "$IPSET_ROUTE" 2>/dev/null | head -25 || echo "(missing — apk add ipset)"
+	echo "--- iptables $IPT_CHAIN ---"
+	iptables -t mangle -L "$IPT_CHAIN" -n 2>/dev/null | head -10 || echo "(missing — apk add iptables iptables-mod-ipset)"
 	echo "--- ip rule ---"
 	ip rule | grep -F "$MARK" || echo "(no policy rule)"
 }

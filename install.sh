@@ -501,13 +501,15 @@ install_dependencies() {
 	done
 
 	# Опциональные — selective routing (НЕ ставим curl/wget — ломают apk!)
-	for pkg in ipset dnsmasq ca-bundle; do
+	for pkg in ipset dnsmasq-full iptables iptables-mod-ipset kmod-ipt-ipset ca-bundle; do
 		if pkg_is_installed "$pkg"; then
 			msg "  OK: $pkg"
 		elif apk_install_one "$pkg"; then
 			msg "  installed: $pkg"
 		else
-			warn "  skip: $pkg (опционально, можно позже: apk add $pkg)"
+			# dnsmasq-full может называться dnsmasq
+			[ "$pkg" = "dnsmasq-full" ] && apk_install_one dnsmasq && msg "  installed: dnsmasq" && continue
+			warn "  skip: $pkg (selective routing: apk add $pkg)"
 			optional_failed=1
 		fi
 	done
