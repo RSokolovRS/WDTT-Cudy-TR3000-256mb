@@ -15,12 +15,12 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.5.0"
+WDTT_INSTALL_VERSION="3.5.1"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="5104d10"
+REPO_REF="a15c5e9"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
@@ -156,6 +156,11 @@ github_api_get() {
 }
 
 check_github_access() {
+	if [ "$WDTT_SKIP_PROBE" = "1" ]; then
+		warn "Пропуск проверки CDN (WDTT_SKIP_PROBE=1)"
+		return 0
+	fi
+
 	# Проверяем доступ (jsDelivr pin → raw → jsDelivr @main)
 	if download_file "$JSDELIVR_PIN/install.sh" "$DOWNLOAD_DIR/probe.sh"; then
 		rm -f "$DOWNLOAD_DIR/probe.sh"
@@ -175,10 +180,21 @@ check_github_access() {
 		return 0
 	fi
 
+	# install.sh уже на роутере (raw GitHub сработал) — продолжаем
+	if [ -s /tmp/wdtt-install.sh ] && grep -q WDTT_INSTALL_VERSION /tmp/wdtt-install.sh 2>/dev/null; then
+		warn "CDN probe failed — используем локальный /tmp/wdtt-install.sh"
+		return 0
+	fi
+
+	if [ -n "$WDTT_LOCAL_BIN" ] && [ -f "$WDTT_LOCAL_BIN" ]; then
+		warn "CDN probe failed — продолжаем (WDTT_LOCAL_BIN задан)"
+		return 0
+	fi
+
 	if [ -z "$GITHUB_TOKEN" ]; then
 		err "Не удаётся скачать файлы из GitHub / CDN."
-		err "Установите с компьютера: sh scripts/install-from-pc.sh root@192.168.1.1"
-		err "Или: scp install.sh root@ROUTER:/tmp/ && WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/install.sh"
+		err "На роутере: WDTT_SKIP_PROBE=1 WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh"
+		err "С ПК: sh scripts/install-from-pc.sh root@192.168.1.1 --clean"
 		exit 1
 	fi
 

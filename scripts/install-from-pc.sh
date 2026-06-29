@@ -25,6 +25,9 @@ scp "$TMP/install.sh" "$ROUTER:/tmp/wdtt-install.sh"
 scp "$TMP/wdttd" "$ROUTER:/tmp/wdttd"
 
 echo "=== Run installer on router ==="
-ssh "$ROUTER" "chmod +x /tmp/wdttd /tmp/wdtt-install.sh && WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh"
+CLEAN_ARG=""
+[ "$2" = "--clean" ] && CLEAN_ARG="--clean"
+ssh "$ROUTER" "chmod +x /tmp/wdttd /tmp/wdtt-install.sh && \
+	WDTT_SKIP_PROBE=1 WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh ${CLEAN_ARG}"
 
 echo "=== Done ==="
