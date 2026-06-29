@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.3"
+WDTT_INSTALL_VERSION="3.6.4"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -362,6 +362,58 @@ EOF
 	msg "  OK: hotplug firewall (inline)"
 }
 
+install_wdtt_fix_config_inline() {
+	cat > /usr/libexec/wdtt/fix-config <<'WFC_EOF'
+#!/bin/sh
+WDtt_CFG=/etc/config/wdtt
+log() { logger -t wdtt-fix-config "$*"; }
+[ -f "$WDtt_CFG" ] || exit 1
+grep -qE '^[[:space:]]*option domain[[:space:]]' "$WDtt_CFG" 2>/dev/null && {
+	t="$(mktemp)"; grep -Ev '^[[:space:]]*option domain[s]*[[:space:]]' "$WDtt_CFG" > "$t" && mv "$t" "$WDtt_CFG"
+}
+grep -qE "^[[:space:]]*option hashes '[^']+'" "$WDtt_CFG" 2>/dev/null || {
+	t="$(mktemp)"; awk '/option hashes/{h=$0; if(h~/'\''[^'\'']+'\''/){print h; next}; getline; while(getline&&$0!~/'\''/){gsub(/^[[:space:]]+/,"",$0); gsub(/'\''/,"",$0); h=h","$0} print h; next} {print}' "$WDtt_CFG" > "$t" 2>/dev/null && mv "$t" "$WDtt_CFG"
+}
+uci show wdtt 2>&1 | grep -qi parse || {
+	v="$(uci -q get wdtt.globals.hashes 2>/dev/null)"; [ -n "$v" ] && uci set wdtt.globals.hashes="$(echo "$v"|tr '\n\r\t ' ','|sed 's/,,*/,/g')" && uci commit wdtt
+}
+WFC_EOF
+	chmod 755 /usr/libexec/wdtt/fix-config
+	msg "  OK: fix-config (inline)"
+}
+
+install_wdtt_doctor_inline() {
+	cat > /usr/libexec/wdtt/doctor <<'WDR_EOF'
+#!/bin/sh
+IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"; IFACE="${IFACE:-wg-wdtt}"
+echo "=== WDTT doctor ==="
+[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config || true
+grep -q parse_list_domain_line /usr/libexec/wdtt/routing 2>/dev/null && echo "OK: routing" || echo "FAIL: update routing script"
+uci show wdtt 2>&1 | grep -qi parse && echo "FAIL: uci parse" || echo "OK: uci"
+ip link show "$IFACE" >/dev/null 2>&1 && echo "OK: $IFACE up" || echo "WARN: connect tunnel first"
+/usr/libexec/wdtt/routing reload "$IFACE" 2>/dev/null; /usr/libexec/wdtt/routing status
+WDR_EOF
+	chmod 755 /usr/libexec/wdtt/doctor
+	msg "  OK: doctor (inline)"
+}
+
+install_wdtt_helpers() {
+	local f dest ok=0
+
+	mkdir -p /usr/libexec/wdtt
+	for f in fix-config doctor; do
+		dest="/usr/libexec/wdtt/$f"
+		if download_file "$RAW_URL/wdtt-client/files/wdtt-$f" "$dest" 2>/dev/null \
+			|| install_repo_file "wdtt-client/files/wdtt-$f" "$dest" "$f" 2>/dev/null; then
+			chmod 0755 "$dest"
+			msg "  OK: wdtt-$f"
+			ok=1
+		fi
+	done
+	[ -x /usr/libexec/wdtt/fix-config ] || install_wdtt_fix_config_inline
+	[ -x /usr/libexec/wdtt/doctor ] || install_wdtt_doctor_inline
+}
+
 install_from_source() {
 	local arch goarch LUCI_VIEW
 
@@ -400,6 +452,7 @@ install_from_source() {
 
 	msg "Step 2/3: scripts and config..."
 	ensure_routing_script || exit 1
+	install_wdtt_helpers
 
 	install_repo_file "luci-app-wdtt/root/etc/init.d/wdtt" /etc/init.d/wdtt "init.d" || exit 1
 	chmod 0755 /etc/init.d/wdtt
@@ -438,7 +491,7 @@ routing_is_current() {
 
 	[ -f "$f" ] || return 1
 	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	grep -q 'WDTT_ROUTING_VERSION=3.6.3' "$f" 2>/dev/null \
+	grep -q 'WDTT_ROUTING_VERSION=3.6.4' "$f" 2>/dev/null \
 		&& grep -q 'parse_list_domain_line' "$f" 2>/dev/null \
 		&& grep -q 'remove_legacy_option_domains' "$f" 2>/dev/null \
 		&& return 0
@@ -449,11 +502,11 @@ ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: routing v3.6.3"
+		msg "  OK: routing v3.6.4"
 		return 0
 	fi
 
-	warn "Обновляем routing → v3.6.3..."
+	warn "Обновляем routing → v3.6.4..."
 	if download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" 2>/dev/null; then
 		:
 	elif install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing"; then
@@ -466,7 +519,7 @@ ensure_routing_script() {
 	chmod 0755 "$dest"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: /usr/libexec/wdtt/routing (v3.6.3)"
+		msg "  OK: /usr/libexec/wdtt/routing (v3.6.4)"
 		return 0
 	fi
 
@@ -633,6 +686,7 @@ fix_wdtt_legacy() {
 	fi
 	/usr/libexec/wdtt/routing stop 2>/dev/null || true
 	ensure_routing_script 2>/dev/null || true
+	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
 }
 
 check_system() {
@@ -776,6 +830,12 @@ post_install() {
 	rm -rf /tmp/luci-* 2>/dev/null || true
 	/etc/init.d/rpcd restart 2>/dev/null || true
 	/etc/init.d/wdtt enable 2>/dev/null || true
+
+	if [ -x /usr/libexec/wdtt/doctor ]; then
+		msg ""
+		msg "Запуск wdtt-doctor..."
+		/usr/libexec/wdtt/doctor 2>/dev/null || true
+	fi
 
 	msg ""
 	msg "============================================"

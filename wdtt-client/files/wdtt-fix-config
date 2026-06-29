@@ -1,0 +1,112 @@
+#!/bin/sh
+# Нормализация /etc/config/wdtt: ghost option domain + multiline hashes
+
+WDtt_CFG=/etc/config/wdtt
+
+log() { logger -t wdtt-fix-config "$*"; }
+
+[ -f "$WDtt_CFG" ] || { log "ERROR: $WDtt_CFG missing"; exit 1; }
+
+fix_option_domain_lines() {
+	local tmp changed=0
+
+	grep -qE '^[[:space:]]*option domain[[:space:]]' "$WDtt_CFG" 2>/dev/null && changed=1
+	grep -qE '^[[:space:]]*option domains[[:space:]]' "$WDtt_CFG" 2>/dev/null && changed=1
+	[ "$changed" -eq 1 ] || return 0
+
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
+	grep -Ev '^[[:space:]]*option domain[[:space:]]' "$WDtt_CFG" \
+		| grep -Ev '^[[:space:]]*option domains[[:space:]]' > "$tmp" \
+		|| { rm -f "$tmp"; return 1; }
+	mv "$tmp" "$WDtt_CFG"
+	log "removed legacy option domain lines"
+}
+
+fix_multiline_hashes() {
+	local tmp out="" line in_hashes=0 payload="" prefix="" suffix=""
+
+	# Уже одна строка?
+	if grep -E "^[[:space:]]*option hashes '[^']+'[[:space:]]*$" "$WDtt_CFG" >/dev/null 2>&1; then
+		return 0
+	fi
+	grep -q 'option hashes' "$WDtt_CFG" 2>/dev/null || return 0
+
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
+	while read -r line || [ -n "$line" ]; do
+		case "$line" in
+			*"option hashes"*)
+				in_hashes=1
+				prefix="${line%%option hashes*}"
+				line="${line#*option hashes}"
+				line="$(echo "$line" | sed "s/^[[:space:]]*//")"
+				payload="${line#\'}"
+				if [ "$payload" != "$line" ]; then
+					case "$payload" in
+						*\'*)
+							payload="${payload%%\'*}"
+							echo "${prefix}option hashes '${payload}'" >> "$tmp"
+							in_hashes=0
+							payload=""
+							continue
+							;;
+					esac
+				else
+					payload="${line#\"}"
+					payload="${payload%%\"*}"
+					if [ -n "$payload" ] && [ "$line" != "$payload" ]; then
+						echo "${prefix}option hashes '${payload}'" >> "$tmp"
+						in_hashes=0
+						payload=""
+						continue
+					fi
+					payload=""
+				fi
+				continue
+				;;
+		esac
+		if [ "$in_hashes" -eq 1 ]; then
+			part="$(echo "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^'\''//; s/'\''$//; s/,$//')"
+			[ -z "$part" ] && continue
+			case "$line" in
+				*\'*)
+					part="${part%%\'*}"
+					[ -n "$payload" ] && payload="${payload},${part}" || payload="$part"
+					echo "${prefix}option hashes '${payload}'" >> "$tmp"
+					in_hashes=0
+					payload=""
+					continue
+					;;
+			esac
+			[ -n "$payload" ] && payload="${payload},${part}" || payload="$part"
+			continue
+		fi
+		echo "$line" >> "$tmp"
+	done < "$WDtt_CFG"
+
+	if [ "$in_hashes" -eq 1 ] && [ -n "$payload" ]; then
+		echo "${prefix}option hashes '${payload}'" >> "$tmp"
+	fi
+
+	mv "$tmp" "$WDtt_CFG"
+	log "normalized multiline hashes"
+}
+
+fix_option_domain_lines
+fix_multiline_hashes
+
+if [ -x /sbin/uci ] && ! uci show wdtt 2>&1 | grep -qi 'parse error'; then
+	val="$(uci -q get wdtt.globals.hashes 2>/dev/null)" || val=""
+	if [ -n "$val" ]; then
+		val="$(printf '%s' "$val" | tr '\n\r\t ' ',' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+		uci -q set "wdtt.globals.hashes=${val}"
+		uci -q commit wdtt 2>/dev/null
+	fi
+fi
+
+if uci show wdtt 2>&1 | grep -qi 'parse error'; then
+	log "WARN: uci parse error remains"
+	exit 1
+fi
+
+log "OK: config normalized"
+exit 0

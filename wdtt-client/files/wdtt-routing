@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.6.3
+# WDTT_ROUTING_VERSION=3.6.4
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -301,7 +301,7 @@ build_dnsmasq() {
 
 	remove_legacy_option_domains
 
-	sync_wdtt_domains_uci
+	# НЕ вызываем sync_wdtt_domains_uci — uci commit при parse error ломает файл/ghost domains
 
 	while read -r line || [ -n "$line" ]; do
 		line="$(trim_line "$line")"
@@ -502,7 +502,9 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.6.3"
+	log "starting selective routing (nft) on $IFACE v3.6.4"
+
+	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
 	ensure_dnsmasq_confdir
 	check_dnsmasq_nftset || return 1

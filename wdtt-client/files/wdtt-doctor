@@ -1,0 +1,55 @@
+#!/bin/sh
+# Полная диагностика и починка WDTT selective routing
+
+IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+IFACE="${IFACE:-wg-wdtt}"
+
+echo "=== WDTT doctor ==="
+
+if [ -x /usr/libexec/wdtt/fix-config ]; then
+	/usr/libexec/wdtt/fix-config || true
+else
+	echo "WARN: fix-config missing — sh install.sh"
+fi
+
+echo "--- routing script ---"
+if grep -q 'parse_list_domain_line' /usr/libexec/wdtt/routing 2>/dev/null \
+	&& grep -q 'WDTT_ROUTING_VERSION=3.6' /usr/libexec/wdtt/routing 2>/dev/null; then
+	echo "OK: routing script"
+else
+	echo "FAIL: routing устарел — sh /tmp/wdtt-install.sh или:"
+	echo "  uclient-fetch -O /usr/libexec/wdtt/routing \\"
+	echo "    https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/wdtt-client/files/wdtt-routing"
+	echo "  chmod 755 /usr/libexec/wdtt/routing"
+fi
+
+echo "--- uci ---"
+if uci show wdtt 2>&1 | grep -qi 'parse error'; then
+	echo "FAIL: uci parse error (часто multiline hashes)"
+	uci show wdtt 2>&1 | head -3
+else
+	echo "OK: uci parse"
+	echo "hashes: $(uci -q get wdtt.globals.hashes 2>/dev/null | cut -c1-40)..."
+	echo "captcha_mode: $(uci -q get wdtt.globals.captcha_mode 2>/dev/null)"
+fi
+
+echo "--- wireguard ---"
+if ip link show "$IFACE" >/dev/null 2>&1; then
+	echo "OK: $IFACE up"
+else
+	echo "WARN: $IFACE down — routing reload может не создать table 100"
+	echo "      Сначала LuCI → Подключить (connected), потом doctor снова"
+fi
+
+echo "--- reload routing ---"
+/usr/libexec/wdtt/routing reload "$IFACE" 2>&1 || true
+
+echo ""
+/usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
+
+echo ""
+echo "=== Чеклист ==="
+echo "1) LuCI: captcha_mode=WV, hashes одной строкой"
+echo "2) LuCI: Правила → list domain (2ip.io, youtube.com), Включено"
+echo "3) Подключить → connected → doctor снова"
+echo "4) С LAN-клиента: curl -4 https://2ip.io (DNS=роутер, DoH off)"

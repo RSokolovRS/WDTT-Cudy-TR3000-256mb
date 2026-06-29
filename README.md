@@ -37,7 +37,15 @@ sh /tmp/wdtt-install.sh --clean
 
 После `--clean`: `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.6.3+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.6.4+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+
+**Если что-то не работает — одна команда:**
+
+```bash
+/usr/libexec/wdtt/doctor
+```
+
+(после install v3.6.4+; чинит config, перезагружает routing, показывает статус)
 
 После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → **Правила** → добавьте домены → Включено → Подключить.
 
