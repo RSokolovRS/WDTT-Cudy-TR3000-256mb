@@ -9,7 +9,7 @@ import (
 
 const routingScript = "/usr/libexec/wdtt/routing"
 
-// Start применяет selective routing (nftables + ipset + policy routing).
+// Start применяет selective routing (nft sets + dnsmasq nftset + policy routing).
 func Start(iface string, cfg *config.Settings) error {
 	if !cfg.IsSelective() {
 		return Stop()

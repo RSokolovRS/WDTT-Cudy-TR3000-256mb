@@ -1,6 +1,6 @@
 #!/bin/sh
-# WDTT selective routing — policy routing как в Podkop
-# dnsmasq ipset → iptables/nft mark → ip rule table 100 → wg-wdtt
+# WDTT selective routing — OpenWrt 25 / fw4
+# dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
 
@@ -8,17 +8,21 @@ MARK=0x777474
 TABLE=100
 IFACE="${2:-wg-wdtt}"
 
-IPSET_ROUTE=wdtt_route
-IPSET_EXCL=wdtt_excl
-IPSET_SRC=wdtt_src
-IPT_CHAIN=WDTT
+NFT_TABLE=wdtt
+NFT_SET_ROUTE=wdtt_route
+NFT_SET_EXCL=wdtt_excl
+NFT_SET_SRC=wdtt_src
+NFT_FAMILY=inet
 
 DNSMASQ_SNIPPET=/tmp/dnsmasq.d/wdtt.conf
+NFT_HOOK=/etc/nftables.d/99-wdtt.nft
 STATE_DIR=/var/run/wdtt
 
 log() { logger -t wdtt-routing "$*"; }
 
-# https://2ip.io/ → 2ip.io
+# dnsmasq: nftset=/domain/4#inet#wdtt#wdtt_route
+NFTSET_SUFFIX="4#${NFT_FAMILY}#${NFT_TABLE}#"
+
 normalize_domain() {
 	local d="$1"
 	d="${d#https://}"
@@ -28,19 +32,11 @@ normalize_domain() {
 	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
 }
 
-# UCI list: domain='x' и domain[0]='x'
 uci_list() {
 	local section="$1" option="$2"
 	uci -q show "wdtt.${section}.${option}" 2>/dev/null | \
 		sed -n "s/^wdtt\.${section}\.${option}\(=\|\[\d\+\]=\)//p" | \
 		sed "s/^'//;s/'$//"
-}
-
-ipset_create() {
-	local name="$1"
-	ipset destroy "$name" 2>/dev/null
-	ipset create "$name" hash:net family inet hashsize 4096 maxelem 65536 2>/dev/null || \
-		ipset flush "$name" 2>/dev/null
 }
 
 collect_domains() {
@@ -80,7 +76,7 @@ collect_source_ips() {
 }
 
 build_dnsmasq() {
-	local section domain n=0
+	local n=0
 
 	mkdir -p "$(dirname "$DNSMASQ_SNIPPET")"
 	: > "$DNSMASQ_SNIPPET"
@@ -88,8 +84,8 @@ build_dnsmasq() {
 	config_load wdtt
 	config_foreach build_rule_dnsmasq rule
 
-	n="$(grep -c '^ipset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
-	log "dnsmasq: ${n} domain(s) in $DNSMASQ_SNIPPET"
+	n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
+	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
 }
 
 build_rule_dnsmasq() {
@@ -101,27 +97,31 @@ build_rule_dnsmasq() {
 
 	collect_domains "$section" route | while read -r domain; do
 		domain="$(normalize_domain "$domain")"
-		[ -n "$domain" ] && echo "ipset=/${domain}/${IPSET_ROUTE}" >> "$DNSMASQ_SNIPPET"
+		[ -n "$domain" ] && echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
 	done
 }
 
-populate_ipsets() {
-	ipset_create "$IPSET_ROUTE"
-	ipset_create "$IPSET_EXCL"
-	ipset_create "$IPSET_SRC"
+nft_add_one() {
+	local setname="$1" elem="$2"
+	[ -n "$elem" ] || return 0
+	nft add element "$NFT_FAMILY" "$NFT_TABLE" "$setname" "{ $elem }" 2>/dev/null
+}
+
+populate_nft_static() {
+	local section type subnet ip
 
 	uci_list globals routing_excluded_ip | while read -r ip; do
-		[ -n "$ip" ] && ipset add "$IPSET_EXCL" "$ip" 2>/dev/null
+		nft_add_one "$NFT_SET_EXCL" "$ip"
 	done
 	uci_list globals routing_excluded_ips | while read -r ip; do
-		[ -n "$ip" ] && ipset add "$IPSET_EXCL" "$ip" 2>/dev/null
+		nft_add_one "$NFT_SET_EXCL" "$ip"
 	done
 
 	config_load wdtt
-	config_foreach populate_rule_ipsets rule
+	config_foreach populate_rule_nft rule
 }
 
-populate_rule_ipsets() {
+populate_rule_nft() {
 	local section="$1" type
 
 	type="$(uci -q get wdtt.${section}.type)"
@@ -130,44 +130,94 @@ populate_rule_ipsets() {
 	case "$type" in
 		route)
 			collect_subnets "$section" route | while read -r subnet; do
-				[ -n "$subnet" ] && ipset add "$IPSET_ROUTE" "$subnet" 2>/dev/null
+				nft_add_one "$NFT_SET_ROUTE" "$subnet"
 			done
 			collect_source_ips "$section" | while read -r ip; do
-				[ -n "$ip" ] && ipset add "$IPSET_SRC" "$ip" 2>/dev/null
+				nft_add_one "$NFT_SET_SRC" "$ip"
 			done
 			;;
 		exclusion)
 			collect_subnets "$section" exclusion | while read -r subnet; do
-				[ -n "$subnet" ] && ipset add "$IPSET_EXCL" "$subnet" 2>/dev/null
+				nft_add_one "$NFT_SET_EXCL" "$subnet"
 			done
 			;;
 	esac
 }
 
-# ipset создаётся через `ipset`, nft @name — это nft-set (другой тип). Используем iptables mangle.
-setup_mark_rules() {
-	if ! command -v iptables >/dev/null 2>&1; then
-		log "iptables missing — apk add iptables iptables-mod-ipset"
+write_nft_hook() {
+	mkdir -p /etc/nftables.d
+	cat > "$NFT_HOOK" <<EOF
+# WDTT selective routing (managed by /usr/libexec/wdtt/routing)
+table ${NFT_FAMILY} ${NFT_TABLE} {
+	set ${NFT_SET_ROUTE} {
+		type ipv4_addr
+		flags interval
+		auto-merge
+	}
+
+	set ${NFT_SET_EXCL} {
+		type ipv4_addr
+		flags interval
+		auto-merge
+	}
+
+	set ${NFT_SET_SRC} {
+		type ipv4_addr
+	}
+
+	chain prerouting {
+		type filter hook prerouting priority mangle; policy accept;
+
+		ip saddr @${NFT_SET_EXCL} return
+		ip daddr @${NFT_SET_EXCL} return
+		ip saddr @${NFT_SET_SRC} meta mark set ${MARK}
+		ip daddr @${NFT_SET_ROUTE} meta mark set ${MARK}
+	}
+}
+EOF
+}
+
+cleanup_legacy_ipset() {
+	# Старые версии скрипта
+	iptables -t mangle -D PREROUTING -j WDTT 2>/dev/null
+	iptables -t mangle -F WDTT 2>/dev/null
+	iptables -t mangle -X WDTT 2>/dev/null
+	ipset destroy wdtt_route 2>/dev/null
+	ipset destroy wdtt_excl 2>/dev/null
+	ipset destroy wdtt_src 2>/dev/null
+}
+
+setup_nft() {
+	if ! command -v nft >/dev/null 2>&1; then
+		log "nft missing — apk add nftables kmod-nft-core"
 		return 1
 	fi
 
-	iptables -t mangle -N "$IPT_CHAIN" 2>/dev/null || iptables -t mangle -F "$IPT_CHAIN"
-	iptables -t mangle -D PREROUTING -j "$IPT_CHAIN" 2>/dev/null
+	cleanup_legacy_ipset
+	write_nft_hook
 
-	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_EXCL" src -j RETURN 2>/dev/null
-	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_EXCL" dst -j RETURN 2>/dev/null
-	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_SRC" src -j MARK --set-mark "$MARK" 2>/dev/null
-	iptables -t mangle -A "$IPT_CHAIN" -m set --match-set "$IPSET_ROUTE" dst -j MARK --set-mark "$MARK" 2>/dev/null
-	iptables -t mangle -I PREROUTING 1 -j "$IPT_CHAIN" 2>/dev/null
+	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
 
-	log "iptables mangle chain $IPT_CHAIN active"
+	if [ -x /sbin/fw4 ]; then
+		fw4 reload 2>/dev/null || nft -f "$NFT_HOOK"
+	else
+		nft -f "$NFT_HOOK" 2>/dev/null
+	fi
+
+	if ! nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1; then
+		log "ERROR: nft table $NFT_TABLE not loaded"
+		return 1
+	fi
+
+	log "nft table $NFT_TABLE active (fw4)"
 	return 0
 }
 
-teardown_mark_rules() {
-	iptables -t mangle -D PREROUTING -j "$IPT_CHAIN" 2>/dev/null
-	iptables -t mangle -F "$IPT_CHAIN" 2>/dev/null
-	iptables -t mangle -X "$IPT_CHAIN" 2>/dev/null
+teardown_nft() {
+	rm -f "$NFT_HOOK"
+	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
+	[ -x /sbin/fw4 ] && fw4 reload 2>/dev/null
+	cleanup_legacy_ipset
 }
 
 setup_policy_routing() {
@@ -184,31 +234,29 @@ reload_dnsmasq() {
 
 do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing on $IFACE"
+	log "starting selective routing (nft) on $IFACE"
+
+	setup_nft || {
+		log "ERROR: nft setup failed"
+		return 1
+	}
 
 	build_dnsmasq
-	populate_ipsets
-	setup_mark_rules || log "WARN: mark rules failed (install iptables-mod-ipset kmod-ipt-ipset)"
+	populate_nft_static
 	setup_policy_routing
 	reload_dnsmasq
 
 	echo "selective" > "$STATE_DIR/routing.mode"
-	log "selective routing active"
+	log "selective routing active (nft+nftset)"
 }
 
 do_stop() {
 	log "stopping selective routing"
 
-	teardown_mark_rules
+	teardown_nft
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
-
 	rm -f "$DNSMASQ_SNIPPET"
-
-	ipset destroy "$IPSET_ROUTE" 2>/dev/null
-	ipset destroy "$IPSET_EXCL" 2>/dev/null
-	ipset destroy "$IPSET_SRC" 2>/dev/null
-
 	reload_dnsmasq
 	rm -f "$STATE_DIR/routing.mode"
 	log "selective routing stopped"
@@ -223,6 +271,7 @@ do_status() {
 	local mode n
 	mode="$(uci -q get wdtt.globals.routing_mode)"
 	echo "routing_mode=${mode:-?}"
+	echo "backend=nft+nftset"
 	echo "state_file=$(cat "$STATE_DIR/routing.mode" 2>/dev/null || echo missing)"
 	echo "dnsmasq_confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
 	echo "--- uci rules ---"
@@ -230,15 +279,17 @@ do_status() {
 	echo "--- $DNSMASQ_SNIPPET ---"
 	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
 		cat "$DNSMASQ_SNIPPET"
-		n="$(grep -c '^ipset=' "$DNSMASQ_SNIPPET")"
-		echo "($n entries)"
+		n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET")"
+		echo "($n nftset entries)"
 	else
-		echo "(empty)"
+		echo "(empty — включите rule route + domain, затем: routing reload wg-wdtt)"
 	fi
-	echo "--- ipset $IPSET_ROUTE ---"
-	ipset list "$IPSET_ROUTE" 2>/dev/null | head -25 || echo "(missing — apk add ipset)"
-	echo "--- iptables $IPT_CHAIN ---"
-	iptables -t mangle -L "$IPT_CHAIN" -n 2>/dev/null | head -10 || echo "(missing — apk add iptables iptables-mod-ipset)"
+	echo "--- nft set $NFT_SET_ROUTE ---"
+	nft list set "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET_ROUTE" 2>/dev/null | head -20 \
+		|| echo "(missing — routing start failed?)"
+	echo "--- nft chain prerouting ---"
+	nft list chain "$NFT_FAMILY" "$NFT_TABLE" prerouting 2>/dev/null | head -10 \
+		|| echo "(missing)"
 	echo "--- ip rule ---"
 	ip rule | grep -F "$MARK" || echo "(no policy rule)"
 }

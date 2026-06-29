@@ -130,7 +130,7 @@ return view.extend({
 		o.default = 'route';
 
 		o = s.option(form.DynamicList, 'domain', _('Домены'),
-			_('Например youtube.com — IP добавляется через dnsmasq ipset.'));
+			_('Например youtube.com — IP добавляется через dnsmasq nftset → nft.'));
 		o.placeholder = 'example.com';
 
 		o = s.option(form.DynamicList, 'subnet', _('Подсети'), _('CIDR, например 203.0.113.0/24'));

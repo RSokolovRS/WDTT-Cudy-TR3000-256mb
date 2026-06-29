@@ -19,7 +19,7 @@ define Package/wdtt-client
   SUBMENU:=VPN
   TITLE:=WDTT VPN client (WireGuard over VK TURN)
   URL:=https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb
-  DEPENDS:=+wireguard-tools +kmod-wireguard +ca-bundle +nftables +kmod-nft-core +ipset +dnsmasq +curl
+  DEPENDS:=+wireguard-tools +kmod-wireguard +ca-bundle +nftables +kmod-nft-core +dnsmasq-full +curl
 endef
 
 define Package/wdtt-client/description

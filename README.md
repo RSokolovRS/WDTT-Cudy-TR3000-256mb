@@ -134,7 +134,7 @@ sh <(uclient-fetch --header="Authorization: Bearer $GITHUB_TOKEN" -q -O - \
 
 По умолчанию режим **selective** — в туннель идут только выбранные ресурсы:
 
-1. **Правила `route`** — домены (через dnsmasq ipset), подсети, URL-списки
+1. **Правила `route`** — домены (через dnsmasq **nftset** → nft sets), подсети, URL-списки
 2. **Правила `exclusion`** — трафик напрямую
 3. **`routing_excluded_ip`** — устройства, которые всегда мимо туннеля (высший приоритет)
 4. **`source_ip`** в правиле — весь трафик устройства через WDTT (`fully_routed_ips` в Podkop)
@@ -227,7 +227,7 @@ uci commit wdtt
 | Режим | selective |
 | Место на flash | ~15 МБ (бинарник + зависимости) |
 
-512 МБ RAM достаточно для WDTT + dnsmasq ipset + LuCI.
+512 МБ RAM достаточно для WDTT + dnsmasq nftset + LuCI.
 
 ## Архитектура
 
@@ -236,8 +236,8 @@ LuCI → UCI → procd → wdttd
                       ├── core (VK TURN / DTLS)
                       ├── wg-wdtt
                       └── /usr/libexec/wdtt/routing
-                            ├── dnsmasq ipset (домены)
-                            ├── nftables fwmark 0x777474
+                            ├── dnsmasq nftset → inet wdtt (домены)
+                            ├── nft prerouting fwmark 0x777474
                             └── ip rule → table 100 → wg-wdtt
 ```
 

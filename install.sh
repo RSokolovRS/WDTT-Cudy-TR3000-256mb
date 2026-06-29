@@ -500,15 +500,14 @@ install_dependencies() {
 		fi
 	done
 
-	# Опциональные — selective routing (НЕ ставим curl/wget — ломают apk!)
-	for pkg in ipset dnsmasq-full iptables iptables-mod-ipset kmod-ipt-ipset ca-bundle; do
+	# Selective routing: nft + dnsmasq nftset (OpenWrt 25 / fw4)
+	for pkg in dnsmasq-full nftables kmod-nft-core kmod-nft-nat ca-bundle; do
 		if pkg_is_installed "$pkg"; then
 			msg "  OK: $pkg"
 		elif apk_install_one "$pkg"; then
 			msg "  installed: $pkg"
 		else
-			# dnsmasq-full может называться dnsmasq
-			[ "$pkg" = "dnsmasq-full" ] && apk_install_one dnsmasq && msg "  installed: dnsmasq" && continue
+			[ "$pkg" = "dnsmasq-full" ] && apk_install_one dnsmasq && msg "  installed: dnsmasq (check nftset support)" && continue
 			warn "  skip: $pkg (selective routing: apk add $pkg)"
 			optional_failed=1
 		fi
@@ -531,7 +530,7 @@ install_dependencies() {
 	fi
 
 	if [ "$optional_failed" -eq 1 ]; then
-		warn "ipset/dnsmasq не установились — selective routing может не работать."
+		warn "dnsmasq-full/nftables не установились — selective routing может не работать."
 		warn "Полный туннель (routing_mode=full) будет работать."
 	fi
 }
