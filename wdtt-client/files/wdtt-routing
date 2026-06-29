@@ -15,8 +15,9 @@ NFT_SET_SRC=wdtt_src
 NFT_FAMILY=inet
 
 DNSMASQ_SNIPPET=/tmp/dnsmasq.d/wdtt.conf
-NFT_HOOK=/etc/nftables.d/99-wdtt.nft
 STATE_DIR=/var/run/wdtt
+NFT_HOOK="$STATE_DIR/wdtt.nft"
+NFT_HOOK_LEGACY="/etc/nftables.d/99-wdtt.nft"
 
 log() { logger -t wdtt-routing "$*"; }
 
@@ -209,6 +210,7 @@ setup_nft() {
 
 	modprobe nf_tables 2>/dev/null
 
+	cleanup_legacy_nft
 	cleanup_legacy_ipset
 	write_nft_hook
 	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
