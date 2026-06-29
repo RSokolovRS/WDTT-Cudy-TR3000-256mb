@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.1"
+WDTT_INSTALL_VERSION="3.6.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -438,7 +438,10 @@ routing_is_current() {
 
 	[ -f "$f" ] || return 1
 	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	grep -q 'WDTT_ROUTING_VERSION=3.6.1' "$f" 2>/dev/null && return 0
+	grep -q 'WDTT_ROUTING_VERSION=3.6.2' "$f" 2>/dev/null \
+		&& grep -q 'parse_list_domain_line' "$f" 2>/dev/null \
+		&& grep -q 'remove_legacy_option_domains' "$f" 2>/dev/null \
+		&& return 0
 	return 1
 }
 
@@ -446,22 +449,28 @@ ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: routing v3.6.1 (up to date)"
+		msg "  OK: routing v3.6.2"
 		return 0
 	fi
 
-	warn "Обновляем routing → v3.6.1 (ghost domains fix)..."
-	install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing" \
-		|| download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" "" \
-		|| return 1
+	warn "Обновляем routing → v3.6.2 (принудительно)..."
+	if download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" 2>/dev/null; then
+		:
+	elif install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing"; then
+		:
+	else
+		err "routing не скачался — вручную:"
+		err "  uclient-fetch -O $dest ${RAW_URL}/wdtt-client/files/wdtt-routing"
+		return 1
+	fi
 	chmod 0755 "$dest"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: /usr/libexec/wdtt/routing"
+		msg "  OK: /usr/libexec/wdtt/routing (v3.6.2)"
 		return 0
 	fi
 
-	err "routing не обновился — CDN cache? Скачайте с GitHub:"
+	err "routing установлен, но версия/функции не совпадают — CDN cache?"
 	err "  uclient-fetch -O $dest ${RAW_URL}/wdtt-client/files/wdtt-routing"
 	return 1
 }
@@ -561,7 +570,8 @@ apply_clean_routing_defaults() {
 	uci -q set wdtt.globals.captcha_mode='wv'
 	uci -q set wdtt.youtube.enabled='1'
 	uci -q set wdtt.youtube.type='route'
-	sed -i '/^[[:space:]]*option domains\?[[:space:]]/d' /etc/config/wdtt 2>/dev/null
+	sed -i '/^[[:space:]]*option domain[[:space:]]/d' /etc/config/wdtt 2>/dev/null
+	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	while uci -q delete wdtt.youtube.domain 2>/dev/null; do :; done
 	uci -q delete wdtt.youtube.domains 2>/dev/null
 	uci -q delete wdtt.youtube.list_url 2>/dev/null
