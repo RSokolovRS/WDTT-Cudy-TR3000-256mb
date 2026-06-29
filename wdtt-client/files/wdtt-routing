@@ -158,7 +158,7 @@ populate_rule_nft() {
 }
 
 write_nft_hook() {
-	mkdir -p /etc/nftables.d
+	mkdir -p "$STATE_DIR"
 	cat > "$NFT_HOOK" <<EOF
 table ${NFT_FAMILY} ${NFT_TABLE} {
 	set ${NFT_SET_ROUTE} {
@@ -186,7 +186,10 @@ table ${NFT_FAMILY} ${NFT_TABLE} {
 EOF
 }
 
-cleanup_legacy_ipset() {
+cleanup_legacy_nft() {
+	# Старые версии клали table в nftables.d — ломает fw4 reload
+	rm -f "$NFT_HOOK_LEGACY"
+}
 	iptables -t mangle -D PREROUTING -j WDTT 2>/dev/null
 	iptables -t mangle -F WDTT 2>/dev/null
 	iptables -t mangle -X WDTT 2>/dev/null
@@ -228,6 +231,7 @@ setup_nft() {
 
 teardown_nft() {
 	rm -f "$NFT_HOOK"
+	rm -f "$NFT_HOOK_LEGACY"
 	nft delete table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null
 	cleanup_legacy_ipset
 }
