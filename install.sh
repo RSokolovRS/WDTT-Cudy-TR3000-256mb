@@ -20,7 +20,7 @@ WDTT_INSTALL_VERSION="3.3"
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="37fa835"
+REPO_REF="a279395"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
