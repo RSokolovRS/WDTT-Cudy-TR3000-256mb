@@ -31,7 +31,6 @@ service_triggers() {
 }
 
 reload_service() {
-	/usr/libexec/wdtt/routing reload "$(uci -q get wdtt.globals.iface 2>/dev/null || echo wg-wdtt)" 2>/dev/null
 	stop
 	start
 }

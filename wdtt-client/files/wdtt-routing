@@ -316,8 +316,12 @@ do_status() {
 	echo "--- nft table ---"
 	nft list table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null | head -25 \
 		|| echo "(missing — run: routing reload wg-wdtt; check: logread | grep wdtt-routing)"
-	echo "--- ip rule ---"
-	ip rule | grep -F "$MARK" || echo "(no policy rule)"
+	echo "--- ip route table $TABLE ---"
+	ip route show table "$TABLE" 2>/dev/null || echo "(empty — routing reload после connected)"
+	echo "--- firewall lan→wdtt ---"
+	uci -q get firewall.wdtt_lan_fwd.src 2>/dev/null && \
+		echo "forwarding: $(uci -q get firewall.wdtt_lan_fwd.src) → $(uci -q get firewall.wdtt_lan_fwd.dest)" \
+		|| echo "(missing — sh /etc/uci-defaults/99-wdtt)"
 }
 
 case "$1" in
