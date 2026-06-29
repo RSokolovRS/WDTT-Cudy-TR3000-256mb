@@ -15,12 +15,12 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.4.1"
+WDTT_INSTALL_VERSION="3.4.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="cd1fe4d"
+REPO_REF="ee16154"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
@@ -389,25 +389,34 @@ routing_is_current() {
 	local f="${1:-/usr/libexec/wdtt/routing}"
 
 	[ -f "$f" ] || return 1
-	grep -q '/var/run/wdtt/wdtt.nft' "$f" 2>/dev/null || return 1
+	# Legacy: table hook in nftables.d (ломает fw4)
 	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	return 0
+	# Current (df19062+): runtime nft + legacy cleanup
+	grep -q 'NFT_HOOK_LEGACY' "$f" 2>/dev/null && return 0
+	grep -q 'STATE_DIR/wdtt.nft' "$f" 2>/dev/null && return 0
+	return 1
 }
 
 ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
 
-	if ! routing_is_current "$dest"; then
-		warn "Обновляем routing (nft → /var/run/wdtt/wdtt.nft)..."
-		install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing" || return 1
-		chmod 0755 "$dest"
-	fi
-
 	if routing_is_current "$dest"; then
 		return 0
 	fi
 
-	err "routing не обновился (CDN cache?) — скачайте вручную с RAW GitHub"
+	warn "Обновляем routing (runtime nft, не nftables.d)..."
+	install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing" \
+		|| download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" "" \
+		|| return 1
+	chmod 0755 "$dest"
+
+	if routing_is_current "$dest"; then
+		msg "  OK: /usr/libexec/wdtt/routing"
+		return 0
+	fi
+
+	err "routing не обновился — CDN cache? Скачайте с GitHub:"
+	err "  uclient-fetch -O $dest ${RAW_URL}/wdtt-client/files/wdtt-routing"
 	return 1
 }
 

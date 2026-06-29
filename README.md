@@ -19,15 +19,15 @@ ln -sf /bin/uclient-fetch /usr/bin/wget
 apk del wget-nossl
 ```
 
-Установка одной командой (актуальный pin, **не @main**):
+Установка одной командой (**install.sh с `@main`** — внутри pin на коммит для остальных файлов):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@cd1fe4d/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
-Должно быть `WDTT installer v3.4`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.4.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → правило **2ip.io** → Подключить → когда **connected**:
 
@@ -47,7 +47,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@cd1fe4d/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -55,7 +55,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-bootstrap.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@cd1fe4d/bootstrap.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/bootstrap.sh
 sh /tmp/wdtt-bootstrap.sh
 ```
 
