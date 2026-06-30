@@ -13,7 +13,7 @@ try_download() {
 	return 1
 }
 
-REPO_REF="e2fffbf"
+REPO_REF="8a02cdb"
 
 for url in \
 	"https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@${REPO_REF}/install.sh" \
