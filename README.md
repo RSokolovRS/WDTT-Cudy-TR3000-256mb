@@ -239,8 +239,7 @@ uci set wdtt.globals.workers='12'
 uci set wdtt.youtube=rule
 uci set wdtt.youtube.enabled='1'
 uci set wdtt.youtube.type='route'
-uci add_list wdtt.youtube.domain='youtube.com'
-uci add_list wdtt.youtube.domain='googlevideo.com'
+uci set wdtt.youtube.domain_list='youtube.com,googlevideo.com,ytimg.com'
 
 uci commit wdtt
 /etc/init.d/wdtt restart

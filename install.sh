@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.7.2"
-WDTT_ROUTING_VERSION="3.7.2"
+WDTT_INSTALL_VERSION="3.7.3"
+WDTT_ROUTING_VERSION="3.7.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -105,6 +105,12 @@ http_get() {
 download_repo_file() {
 	local relpath="$1" dest="$2" label="$3"
 	local base url
+
+	if [ -n "$WDTT_LOCAL_REPO" ] && [ -f "$WDTT_LOCAL_REPO/$relpath" ]; then
+		msg "  local repo: $relpath"
+		cp -f "$WDTT_LOCAL_REPO/$relpath" "$dest"
+		[ -s "$dest" ] && return 0
+	fi
 
 	for base in "$JSDELIVR_PIN" "$RAW_URL" "$JSDELIVR_URL"; do
 		url="${base}/${relpath}"
@@ -521,6 +527,14 @@ ensure_routing_script() {
 	fi
 
 	warn "Обновляем routing → v${WDTT_ROUTING_VERSION}..."
+	if [ -n "$WDTT_LOCAL_REPO" ] && [ -f "$WDTT_LOCAL_REPO/wdtt-client/files/wdtt-routing" ]; then
+		cp -f "$WDTT_LOCAL_REPO/wdtt-client/files/wdtt-routing" "$dest"
+		chmod 0755 "$dest"
+		if routing_is_current "$dest"; then
+			msg "  OK: /usr/libexec/wdtt/routing (local repo v${WDTT_ROUTING_VERSION})"
+			return 0
+		fi
+	fi
 	for url in \
 		"${JSDELIVR_PIN}/wdtt-client/files/wdtt-routing" \
 		"${RAW_PIN}/wdtt-client/files/wdtt-routing" \
@@ -639,9 +653,12 @@ apply_clean_routing_defaults() {
 	uci -q set wdtt.globals.vk_auth_mode='vkcalls'
 	sed -i '/^[[:space:]]*option domain[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
+	sed -i '/list domain.*2iw/d' /etc/config/wdtt 2>/dev/null
+	sed -i '/list domain.*yoltlbe/d' /etc/config/wdtt 2>/dev/null
 	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\\.\\([^.=]*\\)=rule\$/\\1/p"); do
 		while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
 		uci -q delete "wdtt.${section}.domains" 2>/dev/null
+		uci -q delete "wdtt.${section}.domain_list" 2>/dev/null
 		uci -q delete "wdtt.${section}.list_url" 2>/dev/null
 	done
 	uci -q commit wdtt 2>/dev/null
@@ -906,7 +923,7 @@ post_install() {
 	msg "   captcha_mode=wv — fallback при legacy или captcha gate"
 	msg ""
 	msg "2) Selective routing (после connected — автоматически):"
-	msg "   LuCI → Правила маршрутизации → Домены (list domain)"
+	msg "   LuCI → Правила маршрутизации → Домены (domain_list)"
 	msg "   Пример: youtube.com, 2ip.io — только через LuCI, без option domain"
 	msg ""
 	msg "3) Проверка:"
@@ -922,7 +939,7 @@ post_install() {
 	msg "  uci set wdtt.globals.captcha_mode='wv'"
 	msg "  uci set wdtt.globals.enabled='1'"
 	msg "  uci set wdtt.route1.enabled='1'"
-	msg "  uci add_list wdtt.route1.domain='youtube.com'"
+	msg "  uci set wdtt.route1.domain_list='youtube.com,2ip.ru'"
 	msg "  uci commit wdtt && /etc/init.d/wdtt restart"
 }
 

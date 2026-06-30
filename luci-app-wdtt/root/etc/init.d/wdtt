@@ -34,6 +34,13 @@ service_triggers() {
 
 reload_service() {
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
+	local mode iface
+	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+	iface="${iface:-wg-wdtt}"
+	if [ "$mode" != "full" ] && ip link show "$iface" >/dev/null 2>&1; then
+		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
+	fi
 	stop
 	start
 }

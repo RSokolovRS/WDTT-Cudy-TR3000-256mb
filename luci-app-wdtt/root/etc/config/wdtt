@@ -17,10 +17,11 @@ config globals 'globals'
 	# full = весь трафик роутера через WDTT
 	option routing_mode 'selective'
 
-# Пустое правило — домены добавьте в LuCI (DynamicList «Домены»), не option domain
+# Пустое правило — домены в LuCI → «Домены» (option domain_list, не list domain)
 config rule 'route1'
 	option enabled '0'
 	option type 'route'
+	# option domain_list 'youtube.com,2ip.ru'
 
 # Пример: конкретное устройство — весь его трафик через WDTT
 # config rule 'phone'

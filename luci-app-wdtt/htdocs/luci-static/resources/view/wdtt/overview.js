@@ -34,6 +34,11 @@ var callDisconnect = rpc.declare({
 	method: 'disconnect'
 });
 
+var callApplyConfig = rpc.declare({
+	object: 'wdtt',
+	method: 'apply_config'
+});
+
 function formatBytes(n) {
 	n = Number(n) || 0;
 	if (n < 1024) return n + ' B';
@@ -157,9 +162,11 @@ return view.extend({
 		o.value('exclusion', _('Напрямую (exclusion)'));
 		o.default = 'route';
 
-		o = s.option(form.DynamicList, 'domain', _('Домены'),
-			_('Только list domain через LuCI. Пример: youtube.com, 2ip.io — без https:// и без option domain.'));
-		o.placeholder = 'example.com';
+		o = s.option(form.TextValue, 'domain_list', _('Домены'),
+			_('Один домен на строку или через запятую. Пример: youtube.com, 2ip.ru — без https://'));
+		o.rows = 5;
+		o.placeholder = 'youtube.com\n2ip.ru';
+		o.rmempty = true;
 
 		o = s.option(form.DynamicList, 'subnet', _('Подсети'), _('CIDR, например 203.0.113.0/24'));
 		o.datatype = 'cidr';
@@ -215,6 +222,13 @@ return view.extend({
 		}, s);
 
 		poll.add(L.bind(this.pollStatus, this), 3);
+
+		var mapSave = m.save.bind(m);
+		m.save = function() {
+			return mapSave().then(function() {
+				return callApplyConfig().catch(function() { return {}; });
+			});
+		};
 
 		return m.render();
 	},

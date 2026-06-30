@@ -30,6 +30,137 @@ parse_list_domain_line() {
 	printf '%s' "$val"
 }
 
+uci_line_value() {
+	local line="$1" val
+	val="${line#*\'}"
+	if [ "$val" != "$line" ]; then
+		val="${val%%\'*}"
+		printf '%s' "$val"
+		return 0
+	fi
+	val="${line#*\"}"
+	val="${val%%\"*}"
+	printf '%s' "$val"
+}
+
+normalize_domain() {
+	local d="$1"
+	d="${d#https://}"
+	d="${d#http://}"
+	d="${d%%/*}"
+	d="${d%/}"
+	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
+}
+
+is_ghost_domain() {
+	case "$1" in
+	*2iw*|*yoltlbe*) return 0 ;;
+	esac
+	return 1
+}
+
+# Собрать уникальный список доменов (через запятую) из текста / legacy list
+normalize_domain_list_text() {
+	local text="$1" d out="" part=""
+	text="$(printf '%s' "$text" | tr ',;\n\r\t' ' ')"
+	for d in $text; do
+		d="$(normalize_domain "$d")"
+		[ -n "$d" ] || continue
+		is_ghost_domain "$d" && continue
+		case "$d" in *.*) ;; *) continue ;; esac
+		case " $out " in
+		*" $d "*) continue ;;
+		esac
+		[ -n "$out" ] && out="${out},${d}" || out="$d"
+	done
+	printf '%s' "$out"
+}
+
+merge_domain_list_text() {
+	local a="$1" b="$2"
+	[ -n "$a" ] && [ -n "$b" ] && printf '%s' "$(normalize_domain_list_text "$a,$b")"
+	[ -n "$a" ] && printf '%s' "$(normalize_domain_list_text "$a")"
+	[ -n "$b" ] && printf '%s' "$(normalize_domain_list_text "$b")"
+	printf '%s' ""
+}
+
+flush_rule_domain_list() {
+	local section="$1" merged="$2" tmp="$3"
+	merged="$(normalize_domain_list_text "$merged")"
+	[ -n "$merged" ] || return 0
+	echo "	option domain_list '${merged}'" >> "$tmp"
+	if [ -x /sbin/uci ]; then
+		uci -q set "wdtt.${section}.domain_list=${merged}" 2>/dev/null
+		while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
+	fi
+	log "rule ${section}: domain_list=${merged}"
+}
+
+# LuCI DynamicList (list domain) на OpenWrt 25 даёт ghost 2iw.rl — мигрируем в option domain_list
+migrate_rules_to_domain_list() {
+	local tmp line trimmed section="" in_rule=0 val merged="" changed=0
+
+	grep -qE 'list domain|option domain_list|option domain[^_]' "$WDtt_CFG" 2>/dev/null || return 0
+
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
+	while read -r line || [ -n "$line" ]; do
+		trimmed="$(trim_line "$line")"
+		case "$trimmed" in
+			config\ rule\ *)
+				[ -n "$section" ] && flush_rule_domain_list "$section" "$merged" "$tmp"
+				section="${trimmed#config rule }"
+				section="${section#\'}"; section="${section%%\'*}"
+				section="${section#\"}"; section="${section%%\"*}"
+				section="${section%% *}"
+				in_rule=1
+				merged=""
+				changed=1
+				echo "$line" >> "$tmp"
+				;;
+			config\ *)
+				[ -n "$section" ] && flush_rule_domain_list "$section" "$merged" "$tmp"
+				section=""
+				in_rule=0
+				merged=""
+				echo "$line" >> "$tmp"
+				;;
+			*)
+				if [ "$in_rule" -eq 1 ]; then
+					case "$trimmed" in
+						list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
+							val="$(parse_list_domain_line "$trimmed")" || continue
+							merged="$(merge_domain_list_text "$merged" "$val")"
+							changed=1
+							continue
+							;;
+						option\ domain_list\ *)
+							val="$(uci_line_value "$trimmed")"
+							merged="$(merge_domain_list_text "$merged" "$val")"
+							changed=1
+							continue
+							;;
+						option\ domain|option\ domains*)
+							changed=1
+							continue
+							;;
+					esac
+				fi
+				echo "$line" >> "$tmp"
+				;;
+		esac
+	done < "$WDtt_CFG"
+
+	[ -n "$section" ] && flush_rule_domain_list "$section" "$merged" "$tmp"
+
+	if [ "$changed" -eq 1 ]; then
+		mv "$tmp" "$WDtt_CFG"
+		[ -x /sbin/uci ] && uci -q commit wdtt 2>/dev/null
+		log "migrated list domain → domain_list (LuCI-safe)"
+	else
+		rm -f "$tmp"
+	fi
+}
+
 fix_option_domain_lines() {
 	local tmp changed=0
 
@@ -88,110 +219,63 @@ fix_globals_list_domains() {
 	uci -q delete wdtt.globals.domains 2>/dev/null
 }
 
-purge_ghost_rule_domains() {
-	local section="$1" file_domains="" uci_d="" d="" changed=0
+# LuCI/UCI ghost: 2ip.ru→2iw.rl, youtube.com→yoltlbe.com — удаляем из файла напрямую
+purge_ghost_list_domains_from_file() {
+	local tmp line trimmed val changed=0
 
-	[ -n "$section" ] || return 0
-	[ -x /sbin/uci ] || return 0
+	grep -qE '(2iw\.|yoltlbe)' "$WDtt_CFG" 2>/dev/null || return 0
 
-	while read -r d; do
-		[ -n "$d" ] && file_domains="$file_domains $d"
-	done <<EOF
-$(awk -v sec="$section" '
-	$0 ~ "^config rule " { inrule=($0 ~ sec); next }
-	inrule && $1=="list" && $2=="domain" {
-		gsub(/^'\''|'\''$/, "", $3); if ($3 != "") print $3
-	}
-' "$WDtt_CFG" 2>/dev/null)
-EOF
-
-	file_domains="${file_domains#"${file_domains%%[![:space:]]*}"}"
-	[ -n "$file_domains" ] || return 0
-
-	for uci_d in $(uci -q show "wdtt.${section}" 2>/dev/null | sed -n "s/^wdtt\.${section}\.domain=//p" | tr -d "'"); do
-		case "$uci_d" in
-		*2iw*|*yoltlbe*) changed=1 ;;
-		esac
-	done
-
-	[ "$changed" -eq 1 ] || return 0
-	log "purge ghost domains in ${section}"
-	uci -q delete "wdtt.${section}.domain" 2>/dev/null
-	for d in $file_domains; do
-		case "$d" in
-		*2iw*|*yoltlbe*) continue ;;
-		esac
-		uci -q add_list "wdtt.${section}.domain=$d"
-	done
-	uci -q commit wdtt 2>/dev/null
-}
-
-rebuild_rule_domains_uci() {
-	local line section="" domains="" count=0 in_rule=0 val d uci0
-
-	[ -x /sbin/uci ] || return 0
-	uci show wdtt 2>&1 | grep -qi 'parse error' && return 0
-
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
 	while read -r line || [ -n "$line" ]; do
-		line="$(trim_line "$line")"
-		case "$line" in
-			config\ rule\ *)
-				[ -n "$section" ] && [ "$count" -gt 0 ] && {
-					uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
-					if [ "$uci0" != "$(echo "$domains" | awk '{print $1}')" ]; then
-						log "rebuild uci ${section}.domain (was: ${uci0:-broken})"
-						uci -q delete "wdtt.${section}.domain" 2>/dev/null
-						for d in $domains; do
-							[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
-						done
-					fi
-				}
-				section="${line#config rule }"
-				section="${section#\'}"; section="${section%%\'*}"
-				if [ "$section" = "${line#config rule }" ]; then
-					section="${section#\"}"; section="${section%%\"*}"
-				fi
-				section="${section%% *}"
-				domains=""; count=0; in_rule=1
-				continue
-				;;
-			config\ *)
-				[ -n "$section" ] && [ "$count" -gt 0 ] && {
-					uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
-					if [ "$uci0" != "$(echo "$domains" | awk '{print $1}')" ]; then
-						log "rebuild uci ${section}.domain (was: ${uci0:-broken})"
-						uci -q delete "wdtt.${section}.domain" 2>/dev/null
-						for d in $domains; do
-							[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
-						done
-					fi
-				}
-				section=""; domains=""; count=0; in_rule=0
-				continue
-				;;
-		esac
-		[ "$in_rule" -eq 1 ] || continue
-		case "$line" in
+		trimmed="$(trim_line "$line")"
+		case "$trimmed" in
 			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
-				val="$(parse_list_domain_line "$line")" || continue
-				domains="$domains $val"
-				count=$((count + 1))
+				val="$(parse_list_domain_line "$trimmed")" || {
+					echo "$line" >> "$tmp"
+					continue
+				}
+				case "$val" in
+				*2iw*|*yoltlbe*)
+					changed=1
+					log "remove ghost list domain from file: ${val}"
+					continue
+					;;
+				esac
+				;;
+			option\ domain_list\ *)
+				val="$(uci_line_value "$trimmed")"
+				val="$(normalize_domain_list_text "$val")"
+				if [ -n "$val" ]; then
+					echo "	option domain_list '${val}'" >> "$tmp"
+				else
+					changed=1
+				fi
+				continue
 				;;
 		esac
+		echo "$line" >> "$tmp"
 	done < "$WDtt_CFG"
 
-	if [ -n "$section" ] && [ "$count" -gt 0 ]; then
-		uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
-		if [ "$uci0" != "$(echo "$domains" | awk '{print $1}')" ]; then
-			log "rebuild uci ${section}.domain (was: ${uci0:-broken})"
-			uci -q delete "wdtt.${section}.domain" 2>/dev/null
-			for d in $domains; do
-				[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
-			done
-		fi
+	if [ "$changed" -eq 1 ]; then
+		mv "$tmp" "$WDtt_CFG"
+		log "purged ghost domains from ${WDtt_CFG}"
+	else
+		rm -f "$tmp"
 	fi
+}
 
-	uci -q commit wdtt 2>/dev/null
+sanitize_rule_domain_list_uci() {
+	local section="$1" val
+	[ -n "$section" ] || return 0
+	[ -x /sbin/uci ] || return 0
+	val="$(uci -q get "wdtt.${section}.domain_list" 2>/dev/null)" || return 0
+	val="$(normalize_domain_list_text "$val")"
+	if [ -n "$val" ]; then
+		uci -q set "wdtt.${section}.domain_list=${val}" 2>/dev/null
+	else
+		uci -q delete "wdtt.${section}.domain_list" 2>/dev/null
+	fi
+	while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
 }
 
 fix_multiline_hashes() {
@@ -265,8 +349,12 @@ fix_multiline_hashes() {
 fix_option_domain_lines
 fix_globals_list_domains
 fix_multiline_hashes
-purge_ghost_rule_domains route1
-rebuild_rule_domains_uci
+migrate_rules_to_domain_list
+purge_ghost_list_domains_from_file
+for _sec in $(grep -E "^config rule" "$WDtt_CFG" 2>/dev/null | sed "s/^config rule ['\"]\\([^'\"]*\\)['\"].*/\\1/"); do
+	sanitize_rule_domain_list_uci "$_sec"
+done
+[ -x /sbin/uci ] && uci -q commit wdtt 2>/dev/null
 
 if [ -x /sbin/uci ] && ! uci show wdtt 2>&1 | grep -qi 'parse error'; then
 	val="$(uci -q get wdtt.globals.hashes 2>/dev/null)" || val=""

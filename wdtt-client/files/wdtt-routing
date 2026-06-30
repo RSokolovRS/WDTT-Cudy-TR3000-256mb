@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.7.2
+# WDTT_ROUTING_VERSION=3.7.3
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -85,6 +85,31 @@ normalize_domain() {
 	d="${d%%/*}"
 	d="${d%/}"
 	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
+}
+
+is_ghost_domain() {
+	case "$1" in
+	*2iw*|*yoltlbe*) return 0 ;;
+	esac
+	return 1
+}
+
+foreach_domain_text() {
+	local text="$1" callback="$2" d
+	text="$(printf '%s' "$text" | tr ',;\n\r\t' ' ')"
+	for d in $text; do
+		d="$(normalize_domain "$d")"
+		[ -n "$d" ] || continue
+		is_ghost_domain "$d" && continue
+		case "$d" in
+		*.*) "$callback" "$d" ;;
+		esac
+	done
+}
+
+append_domains_from_text() {
+	local text="$1"
+	foreach_domain_text "$text" append_domain_nftset
 }
 
 rule_is_enabled() {
@@ -298,7 +323,7 @@ sync_wdtt_domains_uci() {
 	[ -n "$section" ] && [ "$count" -gt 0 ] && _sync_one_rule_domains "$section" "$domains"
 }
 
-# Только list domain из /etc/config/wdtt (option domain — legacy/ghost, игнорируем)
+# domain_list (LuCI TextValue) + legacy list domain из /etc/config/wdtt
 build_dnsmasq() {
 	local line section="" type="route" enabled="1" in_rule=0 val n=0
 
@@ -347,14 +372,20 @@ build_dnsmasq() {
 			option\ enabled\ *)
 				enabled="$(uci_line_value "$line")"
 				;;
+			option\ domain_list\ *)
+				[ "$type" = "route" ] || continue
+				[ "$enabled" = "0" ] && continue
+				val="$(uci_line_value "$line")"
+				append_domains_from_text "$val"
+				;;
 			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
 				[ "$type" = "route" ] || continue
 				[ "$enabled" = "0" ] && continue
 				val="$(parse_list_domain_line "$line")" || continue
 				append_domain_nftset "$val"
 				;;
-			option\ domain*|option\ domains*)
-				log "WARN: ignoring legacy option domain line (use list domain)"
+			option\ domain|option\ domains*)
+				log "WARN: ignoring legacy option domain (use domain_list in LuCI)"
 				continue
 				;;
 			option\ list_url\ *)
@@ -514,7 +545,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.7.2"
+	log "starting selective routing (nft) on $IFACE v3.7.3"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
@@ -578,10 +609,9 @@ do_status() {
 	echo "--- legacy option domain (must be empty) ---"
 	grep -E '^[[:space:]]*option domains?[[:space:]]' /etc/config/wdtt 2>/dev/null \
 		|| echo "(none — OK)"
-	echo "uci domain[0]=$(uci -q get wdtt.Cudy_TR3000.domain[0] 2>/dev/null \
-		|| uci -q get wdtt.route1.domain[0] 2>/dev/null \
-		|| uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
-	echo "file domain=$(grep -E 'domain|domains' /etc/config/wdtt 2>/dev/null | head -5)"
+	echo "domain_list=$(uci -q get wdtt.route1.domain_list 2>/dev/null \
+		|| uci -q get wdtt.youtube.domain_list 2>/dev/null || echo -)"
+	echo "file domains=$(grep -E 'domain_list|list domain' /etc/config/wdtt 2>/dev/null | head -5)"
 	echo "--- /etc/config/wdtt (rules) ---"
 	grep -E "^config rule|domain|list_url" /etc/config/wdtt 2>/dev/null | head -20
 	echo "--- $DNSMASQ_SNIPPET ---"

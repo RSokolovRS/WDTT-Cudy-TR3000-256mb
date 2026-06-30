@@ -14,6 +14,18 @@ wdtt_connect() {
 	return 0
 }
 
+wdtt_apply_config() {
+	local iface mode
+	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
+	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+	iface="${iface:-wg-wdtt}"
+	if [ "$mode" != "full" ] && ip link show "$iface" >/dev/null 2>&1; then
+		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
+	fi
+	return 0
+}
+
 wdtt_disconnect() {
 	uci -q set wdtt.globals.enabled='0' || return 1
 	uci -q commit wdtt || return 1
@@ -24,7 +36,7 @@ wdtt_disconnect() {
 
 case "$1" in
 	list)
-		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {} }'
+		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {}, "apply_config": {} }'
 		;;
 	call)
 		method="${2:-}"
@@ -102,6 +114,17 @@ case "$1" in
 				else
 					json_init
 					json_add_string error "disconnect failed"
+					json_dump
+				fi
+				;;
+			apply_config)
+				if wdtt_apply_config; then
+					json_init
+					json_add_string result "ok"
+					json_dump
+				else
+					json_init
+					json_add_string error "apply_config failed"
 					json_dump
 				fi
 				;;
