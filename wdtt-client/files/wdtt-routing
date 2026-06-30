@@ -99,6 +99,7 @@ append_domain_nftset() {
 	domain="$(normalize_domain "$domain")"
 	case "$domain" in
 	*" "*|*/*/*|list\ domain*|option\ domain*) return 0 ;;
+	*2iw.*|*yoltlbe*) log "WARN: skip ghost domain: ${domain}"; return 0 ;;
 	esac
 	case "$domain" in
 	*.*) ;;

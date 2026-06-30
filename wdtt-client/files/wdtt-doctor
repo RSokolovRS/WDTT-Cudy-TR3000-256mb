@@ -68,8 +68,6 @@ echo ""
 echo ""
 echo "=== rule type check ==="
 rule_type="$(uci -q get wdtt.route1.type 2>/dev/null)"
-rule_domains="$(uci -q show wdtt 2>/dev/null | grep -c \"\\.domain='\" || true)"
-rule_domains="${rule_domains:-0}"
 if uci show wdtt 2>/dev/null | grep -q "list domain"; then
 	if [ "$rule_type" = "exclusion" ]; then
 		echo "FAIL: route1 type=exclusion — домены идут НАПРЯМУЮ, не в туннель"
@@ -87,14 +85,16 @@ if uci show wdtt 2>/dev/null | grep -q "list domain"; then
 	fi
 else
 	echo "FAIL: нет list domain — добавьте домены в LuCI → Правила"
-	echo "      uci add_list wdtt.route1.domain='2ip.ru'"
-	echo "      uci add_list wdtt.route1.domain='youtube.com'"
+	echo "      uci add_list wdtt.route1.domain=2ip.ru"
+	echo "      uci add_list wdtt.route1.domain=youtube.com"
 fi
 
 echo ""
 echo "=== ghost check ==="
-if grep -qE 'nftset=/(2iw\.io|yoltlbe\.com)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
-	echo "FAIL: wdtt.conf содержит ghost-домены (2iw.io / yoltlbe.com)"
+if grep -qE 'nftset=/(2iw\.|yoltlbe\.com|2iw\.rl)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
+	echo "FAIL: wdtt.conf содержит ghost-домены (2iw.* / yoltlbe.com)"
+	echo "      uci -q delete wdtt.route1.domain; uci add_list wdtt.route1.domain=2ip.ru"
+	echo "      uci add_list wdtt.route1.domain=youtube.com; uci commit wdtt"
 	echo "      /usr/libexec/wdtt/fix-config && /usr/libexec/wdtt/routing reload $IFACE"
 elif grep -q '^nftset=' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
 	echo "OK: wdtt.conf домены выглядят нормально"

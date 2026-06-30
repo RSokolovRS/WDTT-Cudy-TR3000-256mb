@@ -88,6 +88,44 @@ fix_globals_list_domains() {
 	uci -q delete wdtt.globals.domains 2>/dev/null
 }
 
+purge_ghost_rule_domains() {
+	local section="$1" file_domains="" uci_d="" d="" changed=0
+
+	[ -n "$section" ] || return 0
+	[ -x /sbin/uci ] || return 0
+
+	while read -r d; do
+		[ -n "$d" ] && file_domains="$file_domains $d"
+	done <<EOF
+$(awk -v sec="$section" '
+	$0 ~ "^config rule " { inrule=($0 ~ sec); next }
+	inrule && $1=="list" && $2=="domain" {
+		gsub(/^'\''|'\''$/, "", $3); if ($3 != "") print $3
+	}
+' "$WDtt_CFG" 2>/dev/null)
+EOF
+
+	file_domains="${file_domains#"${file_domains%%[![:space:]]*}"}"
+	[ -n "$file_domains" ] || return 0
+
+	for uci_d in $(uci -q show "wdtt.${section}" 2>/dev/null | sed -n "s/^wdtt\.${section}\.domain=//p" | tr -d "'"); do
+		case "$uci_d" in
+		*2iw*|*yoltlbe*) changed=1 ;;
+		esac
+	done
+
+	[ "$changed" -eq 1 ] || return 0
+	log "purge ghost domains in ${section}"
+	uci -q delete "wdtt.${section}.domain" 2>/dev/null
+	for d in $file_domains; do
+		case "$d" in
+		*2iw*|*yoltlbe*) continue ;;
+		esac
+		uci -q add_list "wdtt.${section}.domain=$d"
+	done
+	uci -q commit wdtt 2>/dev/null
+}
+
 rebuild_rule_domains_uci() {
 	local line section="" domains="" count=0 in_rule=0 val d uci0
 
@@ -227,6 +265,7 @@ fix_multiline_hashes() {
 fix_option_domain_lines
 fix_globals_list_domains
 fix_multiline_hashes
+purge_ghost_rule_domains route1
 rebuild_rule_domains_uci
 
 if [ -x /sbin/uci ] && ! uci show wdtt 2>&1 | grep -qi 'parse error'; then
