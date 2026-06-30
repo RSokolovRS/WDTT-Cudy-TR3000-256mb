@@ -24,6 +24,8 @@ start_service() {
 
 stop_service() {
 	/usr/libexec/wdtt/routing stop 2>/dev/null
+	# procd SIGTERM иногда не успевает при captcha wait — добиваем явно
+	killall wdttd 2>/dev/null
 }
 
 service_triggers() {

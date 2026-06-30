@@ -1,14 +1,30 @@
 #!/bin/sh
 # rpcd ubus plugin for WDTT status
 
+. /lib/functions.sh
 . /usr/share/libubox/jshn.sh
 
 STATUS_FILE="/var/run/wdtt/status.json"
 LOG_FILE="/var/run/wdtt/wdtt.log"
 
+wdtt_connect() {
+	uci -q set wdtt.globals.enabled='1' || return 1
+	uci -q commit wdtt || return 1
+	/etc/init.d/wdtt restart 2>/dev/null || /etc/init.d/wdtt start 2>/dev/null
+	return 0
+}
+
+wdtt_disconnect() {
+	uci -q set wdtt.globals.enabled='0' || return 1
+	uci -q commit wdtt || return 1
+	/etc/init.d/wdtt stop 2>/dev/null
+	killall wdttd 2>/dev/null
+	return 0
+}
+
 case "$1" in
 	list)
-		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" } }'
+		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {} }'
 		;;
 	call)
 		method="${2:-}"
@@ -27,7 +43,6 @@ case "$1" in
 				json_init
 				json_add_array lines
 				if [ -f "$LOG_FILE" ]; then
-					# pipe + while runs in subshell — json_add_string теряется; читаем из файла
 					tmp="$(mktemp /tmp/wdtt-rpcd-log.XXXXXX)"
 					tail -n "$tail" "$LOG_FILE" > "$tmp"
 					while IFS= read -r line || [ -n "$line" ]; do
@@ -49,6 +64,30 @@ case "$1" in
 				else
 					json_init
 					json_add_string error "empty token"
+					json_dump
+				fi
+				;;
+			connect)
+				if wdtt_connect; then
+					json_init
+					json_add_string result "ok"
+					json_add_string enabled "1"
+					json_dump
+				else
+					json_init
+					json_add_string error "connect failed"
+					json_dump
+				fi
+				;;
+			disconnect)
+				if wdtt_disconnect; then
+					json_init
+					json_add_string result "ok"
+					json_add_string enabled "0"
+					json_dump
+				else
+					json_init
+					json_add_string error "disconnect failed"
 					json_dump
 				fi
 				;;

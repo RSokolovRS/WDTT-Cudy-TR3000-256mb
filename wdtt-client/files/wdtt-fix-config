@@ -1,11 +1,34 @@
 #!/bin/sh
-# Нормализация /etc/config/wdtt: ghost option domain + multiline hashes
+# Нормализация /etc/config/wdtt: ghost option domain, multiline hashes, broken uci list domain
 
 WDtt_CFG=/etc/config/wdtt
 
 log() { logger -t wdtt-fix-config "$*"; }
 
 [ -f "$WDtt_CFG" ] || { log "ERROR: $WDtt_CFG missing"; exit 1; }
+
+trim_line() {
+	local line="$1"
+	line="${line#"${line%%[![:space:]]*}"}"
+	line="${line%"${line##*[![:space:]]}"}"
+	printf '%s' "$line"
+}
+
+parse_list_domain_line() {
+	local line="$1" val
+	case "$line" in
+		list\ domains\ *) val="${line#list domains}" ;;
+		list\ domain\ *) val="${line#list domain}" ;;
+		*) return 1 ;;
+	esac
+	val="$(trim_line "$val")"
+	case "$val" in
+		\'*\') val="${val#\'}"; val="${val%\'}" ;;
+		\"*\") val="${val#\"}"; val="${val%\"}" ;;
+	esac
+	[ -n "$val" ] || return 1
+	printf '%s' "$val"
+}
 
 fix_option_domain_lines() {
 	local tmp changed=0
@@ -22,10 +45,120 @@ fix_option_domain_lines() {
 	log "removed legacy option domain lines"
 }
 
-fix_multiline_hashes() {
-	local tmp out="" line in_hashes=0 payload="" prefix="" suffix=""
+# list domain в globals — LuCI/uci ghost (2iw.io); routing читает только config rule
+fix_globals_list_domains() {
+	local tmp line section="" in_globals=0 changed=0
 
-	# Уже одна строка?
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
+	while read -r line || [ -n "$line" ]; do
+		case "$line" in
+			config\ globals\ *)
+				section="globals"
+				in_globals=1
+				echo "$line" >> "$tmp"
+				continue
+				;;
+			config\ *)
+				in_globals=0
+				section=""
+				echo "$line" >> "$tmp"
+				continue
+				;;
+		esac
+		if [ "$in_globals" -eq 1 ]; then
+			case "$line" in
+				*list\ domain*|*list\ domains*)
+					changed=1
+					continue
+					;;
+			esac
+		fi
+		echo "$line" >> "$tmp"
+	done < "$WDtt_CFG"
+
+	if [ "$changed" -eq 1 ]; then
+		mv "$tmp" "$WDtt_CFG"
+		log "removed list domain from globals section"
+	else
+		rm -f "$tmp"
+	fi
+
+	[ -x /sbin/uci ] || return 0
+	uci -q delete wdtt.globals.domain 2>/dev/null
+	uci -q delete wdtt.globals.domains 2>/dev/null
+}
+
+rebuild_rule_domains_uci() {
+	local line section="" domains="" count=0 in_rule=0 val d uci0
+
+	[ -x /sbin/uci ] || return 0
+	uci show wdtt 2>&1 | grep -qi 'parse error' && return 0
+
+	while read -r line || [ -n "$line" ]; do
+		line="$(trim_line "$line")"
+		case "$line" in
+			config\ rule\ *)
+				[ -n "$section" ] && [ "$count" -gt 0 ] && {
+					uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
+					if [ "$uci0" != "$(echo "$domains" | awk '{print $1}')" ]; then
+						log "rebuild uci ${section}.domain (was: ${uci0:-broken})"
+						uci -q delete "wdtt.${section}.domain" 2>/dev/null
+						for d in $domains; do
+							[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
+						done
+					fi
+				}
+				section="${line#config rule }"
+				section="${section#\'}"; section="${section%%\'*}"
+				if [ "$section" = "${line#config rule }" ]; then
+					section="${section#\"}"; section="${section%%\"*}"
+				fi
+				section="${section%% *}"
+				domains=""; count=0; in_rule=1
+				continue
+				;;
+			config\ *)
+				[ -n "$section" ] && [ "$count" -gt 0 ] && {
+					uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
+					if [ "$uci0" != "$(echo "$domains" | awk '{print $1}')" ]; then
+						log "rebuild uci ${section}.domain (was: ${uci0:-broken})"
+						uci -q delete "wdtt.${section}.domain" 2>/dev/null
+						for d in $domains; do
+							[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
+						done
+					fi
+				}
+				section=""; domains=""; count=0; in_rule=0
+				continue
+				;;
+		esac
+		[ "$in_rule" -eq 1 ] || continue
+		case "$line" in
+			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
+				val="$(parse_list_domain_line "$line")" || continue
+				domains="$domains $val"
+				count=$((count + 1))
+				;;
+		esac
+	done < "$WDtt_CFG"
+
+	if [ -n "$section" ] && [ "$count" -gt 0 ]; then
+		uci0="$(uci -q get wdtt.${section}.domain[0] 2>/dev/null)"
+		if [ "$uci0" != "$(echo "$domains" | awk '{print $1}')" ]; then
+			log "rebuild uci ${section}.domain (was: ${uci0:-broken})"
+			uci -q delete "wdtt.${section}.domain" 2>/dev/null
+			for d in $domains; do
+				[ -n "$d" ] && uci -q add_list "wdtt.${section}.domain=$d"
+			done
+		fi
+	fi
+
+	uci -q commit wdtt 2>/dev/null
+}
+
+fix_multiline_hashes() {
+	local tmp line in_hashes=0 payload="" prefix=""
+
 	if grep -E "^[[:space:]]*option hashes '[^']+'[[:space:]]*$" "$WDtt_CFG" >/dev/null 2>&1; then
 		return 0
 	fi
@@ -92,7 +225,9 @@ fix_multiline_hashes() {
 }
 
 fix_option_domain_lines
+fix_globals_list_domains
 fix_multiline_hashes
+rebuild_rule_domains_uci
 
 if [ -x /sbin/uci ] && ! uci show wdtt 2>&1 | grep -qi 'parse error'; then
 	val="$(uci -q get wdtt.globals.hashes 2>/dev/null)" || val=""

@@ -14,10 +14,7 @@
 		"write": {
 			"uci": [ "wdtt" ],
 			"ubus": {
-				"wdtt": [ "captcha" ]
-			},
-			"file": {
-				"/etc/init.d/wdtt": [ "exec" ]
+				"wdtt": [ "captcha", "connect", "disconnect" ]
 			}
 		}
 	}

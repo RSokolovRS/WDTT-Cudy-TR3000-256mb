@@ -14,7 +14,8 @@ fi
 
 echo "--- routing script ---"
 if grep -q 'parse_list_domain_line' /usr/libexec/wdtt/routing 2>/dev/null \
-	&& grep -q 'WDTT_ROUTING_VERSION=3.6' /usr/libexec/wdtt/routing 2>/dev/null; then
+	&& grep -q 'WDTT_ROUTING_VERSION=3.6' /usr/libexec/wdtt/routing 2>/dev/null \
+	&& grep -q 'return 0' /usr/libexec/wdtt/routing 2>/dev/null; then
 	echo "OK: routing script"
 else
 	echo "FAIL: routing устарел — sh /tmp/wdtt-install.sh или:"
@@ -33,6 +34,20 @@ else
 	echo "captcha_mode: $(uci -q get wdtt.globals.captcha_mode 2>/dev/null)"
 fi
 
+echo "--- dnsmasq ---"
+if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --version 2>/dev/null | grep -qi nftset; then
+	echo "OK: dnsmasq nftset"
+else
+	echo "FAIL: нужен dnsmasq-full (не обычный dnsmasq):"
+	echo "  apk del dnsmasq && apk add dnsmasq-full && /etc/init.d/dnsmasq restart"
+fi
+echo "confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+if grep -rq wdtt /var/etc/dnsmasq* 2>/dev/null; then
+	echo "OK: wdtt.conf подключён в generated dnsmasq config"
+else
+	echo "WARN: wdtt.conf не виден в /var/etc/dnsmasq* — /etc/init.d/dnsmasq restart"
+fi
+
 echo "--- wireguard ---"
 if ip link show "$IFACE" >/dev/null 2>&1; then
 	echo "OK: $IFACE up"
@@ -48,8 +63,26 @@ echo ""
 /usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
 
 echo ""
+echo "=== ghost check ==="
+if grep -qE 'nftset=/(2iw\.io|yoltlbe\.com)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
+	echo "FAIL: wdtt.conf содержит ghost-домены (2iw.io / yoltlbe.com)"
+	echo "      /usr/libexec/wdtt/fix-config && /usr/libexec/wdtt/routing reload $IFACE"
+elif grep -q '^nftset=' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
+	echo "OK: wdtt.conf домены выглядят нормально"
+else
+	echo "WARN: wdtt.conf пуст — добавьте домены в LuCI → Правила"
+fi
+
+state="$(cat /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+if [ "$state" = "selective" ]; then
+	echo "OK: routing active (state_file=selective)"
+else
+	echo "FAIL: state_file=$state (policy routing не применился)"
+fi
+
+echo ""
 echo "=== Чеклист ==="
-echo "1) LuCI: captcha_mode=WV, hashes одной строкой"
-echo "2) LuCI: Правила → list domain (2ip.io, youtube.com), Включено"
-echo "3) Подключить → connected → doctor снова"
+echo "1) LuCI: Правила → list domain (2ip.io, youtube.com), Включено, Save & Apply"
+echo "2) Подключить → connected"
+echo "3) /usr/libexec/wdtt/doctor — wdtt_route IPs: 1+, state_file=selective"
 echo "4) С LAN-клиента: curl -4 https://2ip.io (DNS=роутер, DoH off)"

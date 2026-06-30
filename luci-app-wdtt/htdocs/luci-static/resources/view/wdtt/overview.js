@@ -6,7 +6,6 @@
 'require uci';
 'require poll';
 'require rpc';
-'require fs';
 
 var callStatus = rpc.declare({
 	object: 'wdtt',
@@ -23,6 +22,16 @@ var callCaptcha = rpc.declare({
 	object: 'wdtt',
 	method: 'captcha',
 	params: [ 'token' ]
+});
+
+var callConnect = rpc.declare({
+	object: 'wdtt',
+	method: 'connect'
+});
+
+var callDisconnect = rpc.declare({
+	object: 'wdtt',
+	method: 'disconnect'
 });
 
 function formatBytes(n) {
@@ -322,28 +331,41 @@ return view.extend({
 		}
 	},
 
+	syncEnabledFlag: function(value) {
+		uci.set('wdtt', 'globals', 'enabled', value);
+		var el = document.querySelector('[data-widget-id="wdtt.globals.enabled"] input[type="checkbox"]')
+			|| document.querySelector('input[name="cbid.wdtt.globals.enabled"]');
+		if (el) {
+			el.checked = (value === '1');
+		}
+	},
+
 	handleConnect: function() {
-		return uci.set('wdtt', 'globals', 'enabled', '1')
-			.then(function() { return uci.save(); })
-			.then(function() { return fs.exec('/etc/init.d/wdtt', ['restart']); })
-			.then(function() {
-				ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель запускается...')), 3000);
-			})
-			.catch(function(e) {
-				ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
-			});
+		var self = this;
+		return callConnect().then(function(res) {
+			if (res && res.error) {
+				throw new Error(res.error);
+			}
+			self.syncEnabledFlag('1');
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель запускается...')), 3000);
+			return self.pollStatus();
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
 	},
 
 	handleDisconnect: function() {
-		return uci.set('wdtt', 'globals', 'enabled', '0')
-			.then(function() { return uci.save(); })
-			.then(function() { return fs.exec('/etc/init.d/wdtt', ['stop']); })
-			.then(function() {
-				ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель остановлен')), 3000);
-			})
-			.catch(function(e) {
-				ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
-			});
+		var self = this;
+		return callDisconnect().then(function(res) {
+			if (res && res.error) {
+				throw new Error(res.error);
+			}
+			self.syncEnabledFlag('0');
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель остановлен')), 3000);
+			return self.pollStatus();
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
 	},
 
 	handleCaptcha: function() {

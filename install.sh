@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.4"
+WDTT_INSTALL_VERSION="3.6.7"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -491,7 +491,7 @@ routing_is_current() {
 
 	[ -f "$f" ] || return 1
 	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	grep -q 'WDTT_ROUTING_VERSION=3.6.4' "$f" 2>/dev/null \
+	grep -q 'WDTT_ROUTING_VERSION=3.6.7' "$f" 2>/dev/null \
 		&& grep -q 'parse_list_domain_line' "$f" 2>/dev/null \
 		&& grep -q 'remove_legacy_option_domains' "$f" 2>/dev/null \
 		&& return 0
@@ -502,11 +502,11 @@ ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: routing v3.6.4"
+		msg "  OK: routing v3.6.7"
 		return 0
 	fi
 
-	warn "Обновляем routing → v3.6.4..."
+	warn "Обновляем routing → v3.6.7..."
 	if download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" 2>/dev/null; then
 		:
 	elif install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing"; then
@@ -519,7 +519,7 @@ ensure_routing_script() {
 	chmod 0755 "$dest"
 
 	if routing_is_current "$dest"; then
-		msg "  OK: /usr/libexec/wdtt/routing (v3.6.4)"
+		msg "  OK: /usr/libexec/wdtt/routing (v3.6.7)"
 		return 0
 	fi
 
@@ -569,10 +569,10 @@ verify_install() {
 	else
 		warn "  [??] nft missing — apk add nftables kmod-nft-core"
 	fi
-	if dnsmasq --version 2>/dev/null | grep -q nftset; then
+	if dnsmasq_has_nftset; then
 		msg "  [OK] dnsmasq nftset"
 	else
-		warn "  [??] dnsmasq без nftset — apk add dnsmasq-full"
+		warn "  [??] dnsmasq без nftset — apk del dnsmasq && apk add dnsmasq-full"
 	fi
 	if uci -q get firewall.wdtt_lan_fwd.src >/dev/null 2>&1; then
 		msg "  [OK] firewall lan→wdtt"
@@ -756,6 +756,40 @@ apk_install_one() {
 	return 1
 }
 
+dnsmasq_has_nftset() {
+	command -v dnsmasq >/dev/null 2>&1 \
+		&& dnsmasq --version 2>/dev/null | grep -qi nftset
+}
+
+# dnsmasq и dnsmasq-full — взаимоисключающие; для selective routing нужен только full (nftset)
+ensure_dnsmasq_full() {
+	local errf="/tmp/wdtt-dnsmasq-$$.log"
+
+	if dnsmasq_has_nftset; then
+		msg "  OK: dnsmasq (nftset)"
+		return 0
+	fi
+
+	warn "  dnsmasq без nftset — ставим dnsmasq-full (заменяет dnsmasq)..."
+
+	if [ "$PKG_IS_APK" -eq 1 ]; then
+		apk del dnsmasq >/dev/null 2>&1
+		if apk add dnsmasq-full >"$errf" 2>&1; then
+			rm -f "$errf"
+			dnsmasq_has_nftset && msg "  OK: dnsmasq-full (nftset)" && return 0
+		fi
+		warn "$(tail -n 3 "$errf" 2>/dev/null | tr '\n' ' ')"
+		rm -f "$errf"
+	else
+		opkg remove dnsmasq 2>/dev/null
+		opkg install dnsmasq-full 2>/dev/null && dnsmasq_has_nftset && return 0
+	fi
+
+	warn "  FAILED: selective routing требует dnsmasq-full:"
+	warn "    apk del dnsmasq && apk add dnsmasq-full && /etc/init.d/dnsmasq restart"
+	return 1
+}
+
 install_dependencies() {
 	local pkg failed=0 optional_failed=0
 
@@ -773,14 +807,15 @@ install_dependencies() {
 		fi
 	done
 
-	# Selective routing: nft + dnsmasq nftset (OpenWrt 25 / fw4)
-	for pkg in dnsmasq-full nftables kmod-nft-core kmod-nft-nat ca-bundle; do
+	ensure_dnsmasq_full || optional_failed=1
+
+	# Selective routing: nft (OpenWrt 25 / fw4)
+	for pkg in nftables kmod-nft-core kmod-nft-nat ca-bundle; do
 		if pkg_is_installed "$pkg"; then
 			msg "  OK: $pkg"
 		elif apk_install_one "$pkg"; then
 			msg "  installed: $pkg"
 		else
-			[ "$pkg" = "dnsmasq-full" ] && apk_install_one dnsmasq && msg "  installed: dnsmasq (check nftset support)" && continue
 			warn "  skip: $pkg (selective routing: apk add $pkg)"
 			optional_failed=1
 		fi

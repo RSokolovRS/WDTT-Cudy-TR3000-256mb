@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.6.4
+# WDTT_ROUTING_VERSION=3.6.7
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -46,17 +46,27 @@ check_dnsmasq_nftset() {
 	return 1
 }
 
+_resolve_via_dnsmasq() {
+	local domain="$1"
+	if command -v dig >/dev/null 2>&1; then
+		dig +time=2 +tries=1 +short "@127.0.0.1" "$domain" A 2>/dev/null | grep -E '^[0-9]+\.' | head -n1
+		return 0
+	fi
+	nslookup "$domain" 127.0.0.1 2>/dev/null | awk '/^Address [0-9]/ { print $2; exit }'
+}
+
 warmup_nftset_domains() {
-	local domain line warmed=0
+	local domain line warmed=0 ip
 
 	[ -f "$DNSMASQ_SNIPPET" ] || return 0
 	while read -r line; do
 		domain="${line#nftset=/}"
 		domain="${domain%%/*}"
 		[ -n "$domain" ] || continue
-		if nslookup "$domain" 127.0.0.1 >/dev/null 2>&1; then
+		ip="$(_resolve_via_dnsmasq "$domain")"
+		if [ -n "$ip" ]; then
 			warmed=$((warmed + 1))
-			log "warmup dns: ${domain} OK"
+			log "warmup dns: ${domain} -> ${ip}"
 		else
 			log "WARN: warmup dns failed: ${domain}"
 		fi
@@ -357,7 +367,10 @@ build_dnsmasq() {
 
 	n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
 	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
-	[ "$n" -eq 0 ] && log "WARN: no domains in wdtt.conf"
+	if [ "$n" -eq 0 ]; then
+		log "WARN: no domains in wdtt.conf"
+	fi
+	return 0
 }
 
 nft_add_one() {
@@ -490,11 +503,9 @@ setup_policy_routing() {
 
 reload_dnsmasq() {
 	[ -f /etc/init.d/dnsmasq ] || return 0
-	if /etc/init.d/dnsmasq reload 2>/dev/null; then
-		return 0
-	fi
-	/etc/init.d/dnsmasq restart 2>/dev/null
-	sleep 1
+	# reload не всегда подхватывает confdir/nftset — restart надёжнее
+	/etc/init.d/dnsmasq restart 2>/dev/null || /etc/init.d/dnsmasq reload 2>/dev/null
+	sleep 2
 	pgrep -x dnsmasq >/dev/null 2>&1 || /etc/init.d/dnsmasq start 2>/dev/null
 }
 
@@ -502,7 +513,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.6.4"
+	log "starting selective routing (nft) on $IFACE v3.6.7"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
@@ -566,7 +577,9 @@ do_status() {
 	echo "--- legacy option domain (must be empty) ---"
 	grep -E '^[[:space:]]*option domains?[[:space:]]' /etc/config/wdtt 2>/dev/null \
 		|| echo "(none — OK)"
-	echo "uci domain[0]=$(uci -q get wdtt.route1.domain[0] 2>/dev/null || uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
+	echo "uci domain[0]=$(uci -q get wdtt.Cudy_TR3000.domain[0] 2>/dev/null \
+		|| uci -q get wdtt.route1.domain[0] 2>/dev/null \
+		|| uci -q get wdtt.youtube.domain[0] 2>/dev/null || echo -)"
 	echo "file domain=$(grep -E 'domain|domains' /etc/config/wdtt 2>/dev/null | head -5)"
 	echo "--- /etc/config/wdtt (rules) ---"
 	grep -E "^config rule|domain|list_url" /etc/config/wdtt 2>/dev/null | head -20
