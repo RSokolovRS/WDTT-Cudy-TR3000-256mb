@@ -47,7 +47,9 @@ sh /tmp/wdtt-install.sh --clean
 /usr/libexec/wdtt/doctor
 ```
 
-(после install v3.6.4+; чинит config, перезагружает routing, показывает статус)
+(после install v3.6.7+; чинит config, перезагружает routing, показывает статус)
+
+LuCI **Подключить / Отключить** (v3.6.7+) — через ubus, без зависания на Save.
 
 После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → **Правила** → добавьте домены → Включено → Подключить.
 
