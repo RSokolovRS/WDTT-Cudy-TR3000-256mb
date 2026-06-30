@@ -37,7 +37,7 @@ sh /tmp/wdtt-install.sh --clean
 
 После `--clean`: `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.6.7+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.6.8+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **Selective routing** требует **`dnsmasq-full`** (nftset). Пакет `dnsmasq` без `-full` не подходит — они взаимоисключающие на OpenWrt.
 

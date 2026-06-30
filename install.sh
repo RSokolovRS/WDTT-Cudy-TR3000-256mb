@@ -15,13 +15,15 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.7"
+WDTT_INSTALL_VERSION="3.6.8"
+WDTT_ROUTING_VERSION="3.6.7"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
 REPO_REF="9186f36"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
+RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
@@ -490,41 +492,51 @@ routing_is_current() {
 	local f="${1:-/usr/libexec/wdtt/routing}"
 
 	[ -f "$f" ] || return 1
-	grep -q 'NFT_HOOK=/etc/nftables.d' "$f" 2>/dev/null && return 1
-	grep -q 'WDTT_ROUTING_VERSION=3.6.7' "$f" 2>/dev/null \
+	# старый скрипт писал hook прямо в /etc/nftables.d (не NFT_HOOK_LEGACY)
+	grep -qE '^NFT_HOOK=/etc/nftables\.d' "$f" 2>/dev/null && return 1
+	grep -q "WDTT_ROUTING_VERSION=${WDTT_ROUTING_VERSION}" "$f" 2>/dev/null \
 		&& grep -q 'parse_list_domain_line' "$f" 2>/dev/null \
 		&& grep -q 'remove_legacy_option_domains' "$f" 2>/dev/null \
 		&& return 0
 	return 1
 }
 
+routing_version_hint() {
+	local f="${1:-/usr/libexec/wdtt/routing}"
+	local ver bytes
+
+	ver="$(grep -m1 'WDTT_ROUTING_VERSION=' "$f" 2>/dev/null || echo 'unknown')"
+	bytes="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+	[ -n "$bytes" ] || bytes=0
+	printf '%s (%s bytes)' "$ver" "$bytes"
+}
+
 ensure_routing_script() {
 	local dest="/usr/libexec/wdtt/routing"
+	local url
 
 	if routing_is_current "$dest"; then
-		msg "  OK: routing v3.6.7"
+		msg "  OK: routing v${WDTT_ROUTING_VERSION}"
 		return 0
 	fi
 
-	warn "Обновляем routing → v3.6.7..."
-	if download_file "$RAW_URL/wdtt-client/files/wdtt-routing" "$dest" 2>/dev/null; then
-		:
-	elif install_repo_file "wdtt-client/files/wdtt-routing" "$dest" "routing"; then
-		:
-	else
-		err "routing не скачался — вручную:"
-		err "  uclient-fetch -O $dest ${RAW_URL}/wdtt-client/files/wdtt-routing"
-		return 1
-	fi
-	chmod 0755 "$dest"
+	warn "Обновляем routing → v${WDTT_ROUTING_VERSION}..."
+	for url in \
+		"${JSDELIVR_PIN}/wdtt-client/files/wdtt-routing" \
+		"${RAW_PIN}/wdtt-client/files/wdtt-routing" \
+		"${RAW_URL}/wdtt-client/files/wdtt-routing" \
+		"${JSDELIVR_URL}/wdtt-client/files/wdtt-routing"
+	do
+		rm -f "$dest"
+		if download_file "$url" "$dest" 2>/dev/null && routing_is_current "$dest"; then
+			chmod 0755 "$dest"
+			msg "  OK: /usr/libexec/wdtt/routing (v${WDTT_ROUTING_VERSION})"
+			return 0
+		fi
+	done
 
-	if routing_is_current "$dest"; then
-		msg "  OK: /usr/libexec/wdtt/routing (v3.6.7)"
-		return 0
-	fi
-
-	err "routing установлен, но версия/функции не совпадают — CDN cache?"
-	err "  uclient-fetch -O $dest ${RAW_URL}/wdtt-client/files/wdtt-routing"
+	err "routing: не удалось получить v${WDTT_ROUTING_VERSION} ($(routing_version_hint "$dest"))"
+	err "  uclient-fetch -O $dest ${JSDELIVR_PIN}/wdtt-client/files/wdtt-routing"
 	return 1
 }
 
