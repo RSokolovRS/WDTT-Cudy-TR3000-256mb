@@ -66,9 +66,15 @@ echo ""
 /usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
 
 echo ""
+has_wdtt_domains() {
+	uci show wdtt 2>/dev/null | grep -qE '\.domain=' && return 0
+	grep -qE '^[[:space:]]*list domain[[:space:]]' /etc/config/wdtt 2>/dev/null && return 0
+	return 1
+}
+
 echo "=== rule type check ==="
 rule_type="$(uci -q get wdtt.route1.type 2>/dev/null)"
-if uci show wdtt 2>/dev/null | grep -q "list domain"; then
+if has_wdtt_domains; then
 	if [ "$rule_type" = "exclusion" ]; then
 		echo "FAIL: route1 type=exclusion — домены идут НАПРЯМУЮ, не в туннель"
 		echo "      uci set wdtt.route1.type='route' && uci commit wdtt"
