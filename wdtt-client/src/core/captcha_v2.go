@@ -610,6 +610,16 @@ type VkCaptchaError struct {
 	CaptchaAttempt string
 }
 
+func (e *VkCaptchaError) Error() string {
+	if e == nil {
+		return "vk captcha error"
+	}
+	if e.ErrorMsg != "" {
+		return fmt.Sprintf("captcha error %d: %s", e.ErrorCode, e.ErrorMsg)
+	}
+	return fmt.Sprintf("captcha error %d (sid=%s)", e.ErrorCode, e.CaptchaSid)
+}
+
 func parseVkCaptchaError(errData map[string]interface{}) *VkCaptchaError {
 	codeFloat, _ := errData["error_code"].(float64)
 	redirectUri, _ := errData["redirect_uri"].(string)
