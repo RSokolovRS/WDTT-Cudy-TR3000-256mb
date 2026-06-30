@@ -16,7 +16,7 @@
 set +e
 
 WDTT_INSTALL_VERSION="3.7.2"
-WDTT_ROUTING_VERSION="3.6.7"
+WDTT_ROUTING_VERSION="3.7.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -488,15 +488,15 @@ install_from_source() {
 	msg "WDTT files installed."
 }
 
-routing_is_current() {
+	routing_is_current() {
 	local f="${1:-/usr/libexec/wdtt/routing}"
 
 	[ -f "$f" ] || return 1
-	# старый скрипт писал hook прямо в /etc/nftables.d (не NFT_HOOK_LEGACY)
 	grep -qE '^NFT_HOOK=/etc/nftables\.d' "$f" 2>/dev/null && return 1
 	grep -q "WDTT_ROUTING_VERSION=${WDTT_ROUTING_VERSION}" "$f" 2>/dev/null \
 		&& grep -q 'parse_list_domain_line' "$f" 2>/dev/null \
 		&& grep -q 'remove_legacy_option_domains' "$f" 2>/dev/null \
+		&& ! grep -q '|| echo 0)"' "$f" 2>/dev/null \
 		&& return 0
 	return 1
 }

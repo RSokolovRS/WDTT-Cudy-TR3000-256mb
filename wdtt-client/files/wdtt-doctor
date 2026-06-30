@@ -14,11 +14,12 @@ fi
 
 echo "--- routing script ---"
 if grep -q 'parse_list_domain_line' /usr/libexec/wdtt/routing 2>/dev/null \
-	&& grep -q 'WDTT_ROUTING_VERSION=3.6' /usr/libexec/wdtt/routing 2>/dev/null \
+	&& grep -q 'WDTT_ROUTING_VERSION=3.7' /usr/libexec/wdtt/routing 2>/dev/null \
+	&& ! grep -q '|| echo 0)"' /usr/libexec/wdtt/routing 2>/dev/null \
 	&& grep -q 'return 0' /usr/libexec/wdtt/routing 2>/dev/null; then
 	echo "OK: routing script"
 else
-	echo "FAIL: routing устарел — sh /tmp/wdtt-install.sh или:"
+	echo "FAIL: routing устарел (нужен v3.7.2+) — sh /tmp/wdtt-install.sh или:"
 	echo "  uclient-fetch -O /usr/libexec/wdtt/routing \\"
 	echo "    https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/wdtt-client/files/wdtt-routing"
 	echo "  chmod 755 /usr/libexec/wdtt/routing"
@@ -79,8 +80,15 @@ if uci show wdtt 2>/dev/null | grep -q "list domain"; then
 	else
 		echo "WARN: route1 type=${rule_type:-?}"
 	fi
+	enabled="$(uci -q get wdtt.route1.enabled 2>/dev/null)"
+	if [ "$enabled" = "0" ]; then
+		echo "FAIL: route1 enabled=0 — правило ВЫКЛЮЧЕНО"
+		echo "      uci set wdtt.route1.enabled='1' && uci commit wdtt"
+	fi
 else
-	echo "WARN: нет list domain в правилах"
+	echo "FAIL: нет list domain — добавьте домены в LuCI → Правила"
+	echo "      uci add_list wdtt.route1.domain='2ip.ru'"
+	echo "      uci add_list wdtt.route1.domain='youtube.com'"
 fi
 
 echo ""
