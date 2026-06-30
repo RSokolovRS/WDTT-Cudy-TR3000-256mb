@@ -166,7 +166,7 @@ func vkDelayRandom(minMs, maxMs int) {
 
 // ─── Cached credential fetcher ───
 
-func getVkCredsCached(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
+func getVkCredsCached(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, getVKAuthMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
 	cache := getStreamCache(streamID)
 	cacheID := getCacheID(streamID)
 
@@ -190,7 +190,7 @@ func getVkCredsCached(ctx context.Context, link string, streamID int, captchaRes
 		return cache.creds.Username, cache.creds.Password, cloneStringSlice(cache.creds.ServerAddrs), nil
 	}
 
-	user, pass, addrs, err := fetchVkCredsSerialized(ctx, link, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+	user, pass, addrs, err := fetchVkCredsSerialized(ctx, link, streamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -212,7 +212,7 @@ var (
 	globalLastVkFetchTime time.Time
 )
 
-func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
+func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, getVKAuthMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
 	vkRequestMu.Lock()
 	defer vkRequestMu.Unlock()
 
@@ -234,14 +234,25 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, capt
 		globalLastVkFetchTime = time.Now()
 	}()
 
-	return fetchVkCreds(ctx, link, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+	return fetchVkCreds(ctx, link, streamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 }
 
 // ─── Main credential fetcher (rotates through stable credential sets) ───
 
-func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
+func fetchVkCreds(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, getVKAuthMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
 	if time.Now().Unix() < globalCaptchaLockout.Load() {
 		return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active")
+	}
+
+	if getVKAuthMode() == "vkcalls" {
+		if user, pass, addrs, err := getVKCredsViaVKCallsPath(ctx, link, streamID); err == nil {
+			log.Printf("[STREAM %d] [VK Auth] Success via VK Calls path", streamID)
+			return user, pass, addrs, nil
+		} else {
+			log.Printf("[STREAM %d] [VK Auth] VK Calls path failed (%s), falling back to legacy", streamID, describeVKCallsFailure(err))
+		}
+	} else {
+		log.Printf("[STREAM %d] [VK Auth] Legacy mode selected, skipping VK Calls path", streamID)
 	}
 
 	var lastErr error
@@ -628,8 +639,8 @@ func isWebViewCaptchaTimeout(err error) bool {
 }
 
 // GetCreds returns TURN credentials for a given stream.
-func GetCreds(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
-	return getVkCredsCached(ctx, link, streamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+func GetCreds(ctx context.Context, link string, streamID int, captchaResultChan chan string, getCaptchaMode func() string, getVKAuthMode func() string, emitCaptchaRequest func(mode, redirectURI, sessionToken string)) (string, string, []string, error) {
+	return getVkCredsCached(ctx, link, streamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 }
 
 // ─── DNS dialer setup ───

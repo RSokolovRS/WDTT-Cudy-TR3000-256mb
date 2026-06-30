@@ -35,9 +35,9 @@ wget -O /tmp/wdtt-install.sh \
 sh /tmp/wdtt-install.sh --clean
 ```
 
-После `--clean`: `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
+После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.6.8+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.7.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **Selective routing** требует **`dnsmasq-full`** (nftset). Пакет `dnsmasq` без `-full` не подходит — они взаимоисключающие на OpenWrt.
 
@@ -51,7 +51,7 @@ sh /tmp/wdtt-install.sh --clean
 
 LuCI **Подключить / Отключить** (v3.6.7+) — через ubus, без зависания на Save.
 
-После установки: LuCI → **WDTT VPN** → peer/password/hashes → **WV** captcha → **Правила** → добавьте домены → Включено → Подключить.
+После установки: LuCI → **WDTT VPN** → peer/password/hashes → **VKCalls** (по умолчанию) → **Правила** → добавьте домены → Включено → Подключить.
 
 Routing поднимается **авоматически** при `connected`. Проверка:
 
@@ -277,6 +277,28 @@ WDTT и Podkop можно использовать **вместе**:
 
 Либо используйте встроенные правила WDTT без Podkop.
 
+## VK Auth (VKCalls без капчи)
+
+По умолчанию **vk_auth_mode=vkcalls** — TURN-креды через VKCalls anonymous flow ([no-captcha](https://github.com/XXcipherX/proxy-turn-vk-android/releases/tag/no-captcha)):
+
+1. `auth.getAnonymToken` → `messages.getCallPreview` → `messages.getAnonymCallToken`
+2. OK.ru session → `vchat.joinConversationByLink` → TURN credentials
+3. Согласованный TLS/User-Agent профиль Chrome 146
+
+При ошибке VKCalls автоматически fallback на **legacy** (старый путь с капчей).
+
+| Режим (LuCI → Режим VK Auth) | Описание |
+|------------------------------|----------|
+| **VKCalls** | Anonymous flow, без капчи (рекомендуется) |
+| **Legacy** | `calls.getAnonymousToken` + капча |
+
+```bash
+uci set wdtt.globals.vk_auth_mode='vkcalls'   # по умолчанию
+uci set wdtt.globals.vk_auth_mode='legacy'    # только старый путь
+```
+
+Отключить VKCalls для отладки: `VK_SKIP_VKCALLS=1` в окружении `wdttd`.
+
 ## Капча
 
 Режим в LuCI → **Режим капчи**:
@@ -285,7 +307,7 @@ WDTT и Podkop можно использовать **вместе**:
 |-------|----------|
 | **Auto** | Авто Go v2, затем fallback |
 | **RJS** | Только авто Go v2 |
-| **WV** | Ручной: ссылка в браузере → `success_token` в LuCI (после лимита VK) |
+| **WV** | Ручной: ссылка в браузере → `success_token` в LuCI (fallback при legacy/captcha gate) |
 
 ```bash
 wdttd -captcha 'token'

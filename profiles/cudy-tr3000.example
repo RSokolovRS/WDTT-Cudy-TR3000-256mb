@@ -12,6 +12,7 @@ config globals 'globals'
 	option routing_mode 'selective'
 	option iface 'wg-wdtt'
 	option captcha_mode 'wv'
+	option vk_auth_mode 'vkcalls'
 
 # Популярные сервисы через WDTT (включите нужные)
 config rule 'youtube'

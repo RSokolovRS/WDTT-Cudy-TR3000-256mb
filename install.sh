@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.6.8"
+WDTT_INSTALL_VERSION="3.7.0"
 WDTT_ROUTING_VERSION="3.6.7"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -27,7 +27,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v1.0.0/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.7.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -607,6 +607,7 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.hashes 2>/dev/null > "$f/hashes"
 	uci -q get wdtt.globals.enabled 2>/dev/null > "$f/enabled"
 	uci -q get wdtt.globals.captcha_mode 2>/dev/null > "$f/captcha_mode"
+	uci -q get wdtt.globals.vk_auth_mode 2>/dev/null > "$f/vk_auth_mode"
 	uci -q get wdtt.globals.workers 2>/dev/null > "$f/workers"
 	uci -q get wdtt.globals.routing_mode 2>/dev/null > "$f/routing_mode"
 }
@@ -617,7 +618,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes enabled captcha_mode workers routing_mode; do
+	for v in peer password hashes enabled captcha_mode vk_auth_mode workers routing_mode; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"
@@ -635,6 +636,7 @@ apply_clean_routing_defaults() {
 
 	uci -q set wdtt.globals.routing_mode='selective'
 	uci -q set wdtt.globals.captcha_mode='wv'
+	uci -q set wdtt.globals.vk_auth_mode='vkcalls'
 	sed -i '/^[[:space:]]*option domain[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\\.\\([^.=]*\\)=rule\$/\\1/p"); do
@@ -643,7 +645,7 @@ apply_clean_routing_defaults() {
 		uci -q delete "wdtt.${section}.list_url" 2>/dev/null
 	done
 	uci -q commit wdtt 2>/dev/null
-	msg "routing: captcha_mode=wv, домены пустые — добавьте в LuCI → Правила"
+	msg "routing: vk_auth_mode=vkcalls, captcha_mode=wv, домены пустые — добавьте в LuCI → Правила"
 }
 
 uninstall_wdtt() {
@@ -892,7 +894,8 @@ post_install() {
 	msg ""
 	msg "1) Туннель (LuCI или SSH):"
 	msg "   peer, password, VK-hashes, enabled=1"
-	msg "   captcha_mode=wv — ручная капча (рекомендуется)"
+	msg "   vk_auth_mode=vkcalls — TURN без капчи (рекомендуется)"
+	msg "   captcha_mode=wv — fallback при legacy или captcha gate"
 	msg ""
 	msg "2) Selective routing (после connected — автоматически):"
 	msg "   LuCI → Правила маршрутизации → Домены (list domain)"
@@ -907,6 +910,7 @@ post_install() {
 	msg "  uci set wdtt.globals.peer='VPS:56000'"
 	msg "  uci set wdtt.globals.password='password'"
 	msg "  uci set wdtt.globals.hashes='vk_hash'"
+	msg "  uci set wdtt.globals.vk_auth_mode='vkcalls'"
 	msg "  uci set wdtt.globals.captcha_mode='wv'"
 	msg "  uci set wdtt.globals.enabled='1'"
 	msg "  uci set wdtt.route1.enabled='1'"

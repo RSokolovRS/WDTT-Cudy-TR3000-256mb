@@ -37,6 +37,7 @@ func WorkerGroup(
 	signalReady chan<- struct{},
 	captchaResultChan chan string,
 	getCaptchaMode func() string,
+	getVKAuthMode func() string,
 	emitCaptchaRequest func(mode, redirectURI, sessionToken string),
 	onTurnURLs func(urls []string),
 ) {
@@ -84,7 +85,7 @@ func WorkerGroup(
 			case <-credsCtx.Done():
 			}
 		}()
-		user, pass, turnURLs, err := GetCreds(credsCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+		user, pass, turnURLs, err := GetCreds(credsCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 		credsCancel()
 		if err == nil {
 			creds = &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: credStreamID}
@@ -131,7 +132,7 @@ func WorkerGroup(
 		getStreamCache(credStreamID).invalidate(credStreamID)
 		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer refreshCancel()
-		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, emitCaptchaRequest)
+		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 		if refreshErr != nil {
 			log.Printf("[TURN] Не удалось обновить креды после %s: %v", reason, refreshErr)
 			return false

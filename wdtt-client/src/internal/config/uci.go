@@ -40,6 +40,7 @@ type Settings struct {
 	TurnHost             string
 	TurnPort             string
 	CaptchaMode          string
+	VKAuthMode           string
 	DeviceID             string
 	Iface                string
 	RoutingMode          RoutingMode
@@ -92,6 +93,7 @@ func Load(path string) (*Settings, error) {
 		TurnHost:    strings.TrimSpace(g["turn_host"]),
 		TurnPort:    strings.TrimSpace(g["turn_port"]),
 		CaptchaMode: defaultString(g["captcha_mode"], "wv"),
+		VKAuthMode:  defaultString(g["vk_auth_mode"], "vkcalls"),
 		DeviceID:    defaultString(g["device_id"], ""),
 		Iface:       defaultString(g["iface"], "wg-wdtt"),
 		Rules:       rules,

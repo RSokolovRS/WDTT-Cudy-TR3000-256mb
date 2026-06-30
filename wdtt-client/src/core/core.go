@@ -21,6 +21,7 @@ type Config struct {
 	DeviceID    string   // -device-id
 	Workers     int      // -n
 	CaptchaMode string   // -captcha-mode
+	VKAuthMode  string   // vkcalls | legacy
 	MTU         int      // 0 = default 1380
 }
 
@@ -63,6 +64,7 @@ type Core struct {
 	pauseFlag         int32
 	CaptchaResultChan chan string
 	captchaMode       atomic.Value
+	vkAuthMode        atomic.Value
 	events            chan Event
 	once              sync.Once
 	turnIPsMu         sync.Mutex
@@ -115,6 +117,7 @@ func New(cfg Config) *Core {
 		events:            make(chan Event, 256),
 	}
 	c.captchaMode.Store(normalizeCaptchaMode(cfg.CaptchaMode))
+	c.vkAuthMode.Store(normalizeVKAuthMode(cfg.VKAuthMode))
 	return c
 }
 
@@ -264,7 +267,7 @@ func (c *Core) Start() (<-chan Event, error) {
 				WorkerGroup(ctx, groupID, startHashIndex, tp, peer, disp, localPort,
 					isFirstGroup, configChan, workerIds, &c.pauseFlag,
 					c.cfg.DeviceID, c.cfg.Password, stats, waitR, sigR,
-					c.CaptchaResultChan, c.getCaptchaMode, emitCaptchaRequest, c.AddTurnIPs)
+					c.CaptchaResultChan, c.getCaptchaMode, c.getVKAuthMode, emitCaptchaRequest, c.AddTurnIPs)
 			}(gID, isFirst, cc, ids, g, myWaitReady, mySignalReady)
 		}
 
@@ -327,11 +330,28 @@ func (c *Core) getCaptchaMode() string {
 	return mode
 }
 
+func (c *Core) getVKAuthMode() string {
+	mode, _ := c.vkAuthMode.Load().(string)
+	if mode == "" {
+		return "vkcalls"
+	}
+	return mode
+}
+
 func normalizeCaptchaMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "auto", "rjs", "wv":
 		return strings.ToLower(strings.TrimSpace(mode))
 	default:
 		return "auto"
+	}
+}
+
+func normalizeVKAuthMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "legacy":
+		return "legacy"
+	default:
+		return "vkcalls"
 	}
 }

@@ -109,6 +109,12 @@ return view.extend({
 		o.value('wv', _('WV (ручной — ссылка + токен)'));
 		o.default = 'wv';
 
+		o = s.option(form.ListValue, 'vk_auth_mode', _('Режим VK Auth'),
+			_('VKCalls — получение TURN-кредов через anonymous flow (без капчи, рекомендуется). Legacy — старый путь через calls.getAnonymousToken с капчей.'));
+		o.value('vkcalls', _('VKCalls (без капчи)'));
+		o.value('legacy', _('Legacy (капча)'));
+		o.default = 'vkcalls';
+
 		o = s.option(form.ListValue, 'routing_mode', _('Маршрутизация'),
 			_('Selective — как Podkop: только выбранные домены/устройства через WDTT. Full — весь трафик.'));
 		o.value('selective', _('Выборочная (Podkop)'));

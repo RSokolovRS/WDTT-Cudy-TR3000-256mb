@@ -114,6 +114,7 @@ func (d *Daemon) runWithConfig(ctx context.Context, cfg *config.Settings) error 
 		DeviceID:    cfg.DeviceID,
 		Workers:     cfg.Workers,
 		CaptchaMode: cfg.CaptchaMode,
+		VKAuthMode:  cfg.VKAuthMode,
 		MTU:         cfg.MTU,
 	}
 

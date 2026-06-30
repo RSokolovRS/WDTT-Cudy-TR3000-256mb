@@ -10,6 +10,7 @@ config globals 'globals'
 	option turn_host ''
 	option turn_port ''
 	option captcha_mode 'wv'
+	option vk_auth_mode 'vkcalls'
 	option device_id ''
 	option iface 'wg-wdtt'
 	# selective = как Podkop (списки в туннель, остальное напрямую)
