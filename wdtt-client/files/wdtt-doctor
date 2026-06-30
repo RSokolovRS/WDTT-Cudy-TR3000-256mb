@@ -65,6 +65,25 @@ echo ""
 /usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
 
 echo ""
+echo "=== rule type check ==="
+rule_type="$(uci -q get wdtt.route1.type 2>/dev/null)"
+rule_domains="$(uci -q show wdtt 2>/dev/null | grep -c \"\\.domain='\" || true)"
+rule_domains="${rule_domains:-0}"
+if uci show wdtt 2>/dev/null | grep -q "list domain"; then
+	if [ "$rule_type" = "exclusion" ]; then
+		echo "FAIL: route1 type=exclusion — домены идут НАПРЯМУЮ, не в туннель"
+		echo "      uci set wdtt.route1.type='route' && uci commit wdtt"
+		echo "      /usr/libexec/wdtt/routing reload $IFACE"
+	elif [ "$rule_type" = "route" ] || [ -z "$rule_type" ]; then
+		echo "OK: rule type=route (домены в туннель)"
+	else
+		echo "WARN: route1 type=${rule_type:-?}"
+	fi
+else
+	echo "WARN: нет list domain в правилах"
+fi
+
+echo ""
 echo "=== ghost check ==="
 if grep -qE 'nftset=/(2iw\.io|yoltlbe\.com)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
 	echo "FAIL: wdtt.conf содержит ghost-домены (2iw.io / yoltlbe.com)"

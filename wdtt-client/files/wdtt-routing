@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.6.7
+# WDTT_ROUTING_VERSION=3.7.2
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -365,7 +365,7 @@ build_dnsmasq() {
 		esac
 	done < /etc/config/wdtt
 
-	n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null || echo 0)"
+	n=$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null) || n=0
 	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
 	if [ "$n" -eq 0 ]; then
 		log "WARN: no domains in wdtt.conf"
@@ -513,7 +513,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.6.7"
+	log "starting selective routing (nft) on $IFACE v3.7.2"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
@@ -586,7 +586,7 @@ do_status() {
 	echo "--- $DNSMASQ_SNIPPET ---"
 	if [ -f "$DNSMASQ_SNIPPET" ] && [ -s "$DNSMASQ_SNIPPET" ]; then
 		cat "$DNSMASQ_SNIPPET"
-		n="$(grep -c '^nftset=' "$DNSMASQ_SNIPPET")"
+		n=$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null) || n=0
 		echo "($n nftset entries)"
 	else
 		echo "(empty)"
@@ -594,7 +594,7 @@ do_status() {
 	echo "--- nft table ---"
 	nft list table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null | head -35 \
 		|| echo "(missing — run: routing reload wg-wdtt; check: logread | grep wdtt-routing)"
-	n="$(nft list set "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET_ROUTE" 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+' || echo 0)"
+	n=$(nft list set "$NFT_FAMILY" "$NFT_TABLE" "$NFT_SET_ROUTE" 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+') || n=0
 	echo "wdtt_route IPs: ${n} (0 = warmup failed or no DNS yet)"
 	echo "--- ip route table $TABLE ---"
 	ip route show table "$TABLE" 2>/dev/null || echo "(empty — routing reload после connected)"
