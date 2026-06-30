@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.7.0"
+WDTT_INSTALL_VERSION="3.7.1"
 WDTT_ROUTING_VERSION="3.6.7"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -27,7 +27,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.7.0/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.7.1/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -666,6 +666,7 @@ uninstall_wdtt() {
 	rm -f /usr/libexec/rpcd/wdtt
 	rm -f /usr/share/luci/menu.d/luci-app-wdtt.json
 	rm -f /usr/share/rpcd/acl.d/luci-app-wdtt.json
+	rm -f /usr/share/wdtt/version
 	rm -f /www/luci-static/resources/view/wdtt/overview.js
 	rmdir /www/luci-static/resources/view/wdtt 2>/dev/null
 
@@ -857,6 +858,11 @@ install_dependencies() {
 	fi
 }
 
+write_wdtt_version_stamp() {
+	mkdir -p /usr/share/wdtt 2>/dev/null || true
+	printf '%s\n' "$WDTT_INSTALL_VERSION" > /usr/share/wdtt/version
+}
+
 post_install() {
 	if [ ! -f /etc/config/wdtt ]; then
 		download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt \
@@ -873,6 +879,8 @@ post_install() {
 	fi
 
 	fix_wdtt_legacy
+
+	write_wdtt_version_stamp
 
 	[ -x /etc/uci-defaults/99-wdtt ] && /etc/uci-defaults/99-wdtt || true
 

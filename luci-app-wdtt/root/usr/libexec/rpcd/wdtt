@@ -30,11 +30,25 @@ case "$1" in
 		method="${2:-}"
 		case "$method" in
 			status)
+				pkg_ver="unknown"
+				[ -r /usr/share/wdtt/version ] && pkg_ver=$(tr -d '\r\n' < /usr/share/wdtt/version | head -c 32)
+				wdttd_ver=""
+				[ -x /usr/sbin/wdttd ] && wdttd_ver=$(/usr/sbin/wdttd -version 2>/dev/null | tr -d '\r\n' | head -c 32)
+
 				if [ -f "$STATUS_FILE" ]; then
-					cat "$STATUS_FILE"
+					json_load "$(cat "$STATUS_FILE")"
 				else
-					echo '{"running":false,"state":"stopped","rx_bytes":0,"tx_bytes":0,"workers":0,"wg_applied":false}'
+					json_init
+					json_add_boolean running 0
+					json_add_string state "stopped"
+					json_add_int rx_bytes 0
+					json_add_int tx_bytes 0
+					json_add_int workers 0
+					json_add_boolean wg_applied 0
 				fi
+				json_add_string package_version "$pkg_ver"
+				[ -n "$wdttd_ver" ] && json_add_string wdttd_version "$wdttd_ver"
+				json_dump
 				;;
 			logs)
 				json_load "$(cat)"

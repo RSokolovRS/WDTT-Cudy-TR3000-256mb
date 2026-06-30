@@ -54,6 +54,20 @@ function stateBadge(state) {
 	return E('span', { 'class': cls }, state || 'unknown');
 }
 
+function wdttPageTitle(status) {
+	var v = String((status && status.package_version) || '').replace(/^v/i, '').trim();
+	return v ? _('WDTT VPN') + ' v' + v : _('WDTT VPN');
+}
+
+function wdttPageDescription(status) {
+	var lines = [_('WireGuard-туннель через VK TURN/DTLS. Совместим с сервером WDTT/PWDTT.')];
+	var wdttd = String((status && status.wdttd_version) || '').trim();
+	if (wdttd) {
+		lines.push(_('Демон wdttd:') + ' ' + wdttd);
+	}
+	return lines.join(' ');
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -68,8 +82,7 @@ return view.extend({
 		var m, s, o, status = data[1] || {};
 		var self = this;
 
-		m = new form.Map('wdtt', _('WDTT VPN'),
-			_('WireGuard-туннель через VK TURN/DTLS. Совместим с сервером WDTT/PWDTT.'));
+		m = new form.Map('wdtt', wdttPageTitle(status), wdttPageDescription(status));
 
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Настройки туннеля'));
 
@@ -270,7 +283,11 @@ return view.extend({
 
 	renderStatus: function(st) {
 		st = st || {};
+		var pkgVer = String(st.package_version || '').trim();
+		var wdttdVer = String(st.wdttd_version || st.version || '').trim();
 		return E('table', { 'class': 'table' }, [
+			pkgVer ? E('tr', {}, [E('td', { 'width': '200' }, _('Версия WDTT')), E('td', {}, pkgVer)]) : '',
+			wdttdVer ? E('tr', {}, [E('td', {}, _('Демон wdttd')), E('td', {}, wdttdVer)]) : '',
 			E('tr', {}, [E('td', { 'width': '200' }, _('Состояние')), E('td', {}, stateBadge(st.state))]),
 			E('tr', {}, [E('td', {}, _('Работает')), E('td', {}, st.running ? _('Да') : _('Нет'))]),
 			E('tr', {}, [E('td', {}, _('WireGuard')), E('td', {}, st.wg_applied ? _('Поднят') : _('Нет'))]),

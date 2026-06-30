@@ -33,6 +33,7 @@ else
 	echo "hashes: $(uci -q get wdtt.globals.hashes 2>/dev/null | cut -c1-40)..."
 	echo "captcha_mode: $(uci -q get wdtt.globals.captcha_mode 2>/dev/null)"
 	echo "vk_auth_mode: $(uci -q get wdtt.globals.vk_auth_mode 2>/dev/null)"
+	echo "package_version: $(tr -d '\r\n' < /usr/share/wdtt/version 2>/dev/null || echo unknown)"
 fi
 
 echo "--- dnsmasq ---"
