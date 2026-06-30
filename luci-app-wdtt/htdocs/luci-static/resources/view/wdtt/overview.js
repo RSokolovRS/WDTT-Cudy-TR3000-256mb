@@ -64,6 +64,20 @@ function wdttPageTitle(status) {
 	return v ? _('WDTT VPN') + ' v' + v : _('WDTT VPN');
 }
 
+function normalizeDomainList(val) {
+	if (val == null || val === '')
+		return '';
+
+	return String(val).replace(/\r/g, '').split(/[\n,;]+/).map(function(d) {
+		d = d.trim().replace(/^https?:\/\//i, '').split('/')[0].split(' ')[0].toLowerCase();
+		return d;
+	}).filter(function(d) {
+		return d && d.indexOf('.') !== -1 && d.indexOf('2iw') === -1 && d.indexOf('yoltlbe') === -1;
+	}).filter(function(d, i, a) {
+		return a.indexOf(d) === i;
+	}).join(',');
+}
+
 function wdttPageDescription(status) {
 	var lines = [_('WireGuard-туннель через VK TURN/DTLS. Совместим с сервером WDTT/PWDTT.')];
 	var wdttd = String((status && status.wdttd_version) || '').trim();
@@ -163,14 +177,33 @@ return view.extend({
 		o.default = 'route';
 
 		o = s.option(form.TextValue, 'domain_list', _('Домены'),
-			_('Один домен на строку или через запятую. Пример: youtube.com, 2ip.ru — без https://'));
-		o.rows = 5;
-		o.placeholder = 'youtube.com\n2ip.ru';
+			_('Через запятую или с новой строки. Сохраняется одной строкой UCI. Пример: youtube.com, googlevideo.com'));
+		o.rows = 4;
+		o.placeholder = 'youtube.com, googlevideo.com, 2ip.ru';
 		o.rmempty = true;
+		o.load = function(section_id) {
+			var v = uci.get('wdtt', section_id, 'domain_list');
+			if (v == null)
+				return '';
+			if (Array.isArray(v))
+				v = v.join(',');
+			return String(v).replace(/,/g, '\n');
+		};
+		o.write = function(section_id, formvalue) {
+			var normalized = normalizeDomainList(formvalue);
+			if (normalized)
+				uci.set('wdtt', section_id, 'domain_list', normalized);
+			else
+				uci.unset('wdtt', section_id, 'domain_list');
+		};
+		o.remove = function(section_id) {
+			uci.unset('wdtt', section_id, 'domain_list');
+		};
 
 		o = s.option(form.DynamicList, 'subnet', _('Подсети'), _('CIDR, например 203.0.113.0/24'));
 		o.datatype = 'cidr';
-		o.placeholder = '0.0.0.0/0';
+		o.placeholder = '203.0.113.0/24';
+		o.rmempty = true;
 
 		o = s.option(form.DynamicList, 'source_ip', _('IP устройства (полная маршрутизация)'),
 			_('Весь трафик этого устройства через WDTT, как fully_routed_ips в Podkop.'));
@@ -180,6 +213,7 @@ return view.extend({
 		o = s.option(form.Value, 'list_url', _('URL списка доменов'),
 			_('Файл: один домен на строку. Загружается при подключении.'));
 		o.placeholder = 'https://example.com/list.txt';
+		o.rmempty = true;
 
 		/* --- Статус --- */
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Статус'));

@@ -278,6 +278,72 @@ sanitize_rule_domain_list_uci() {
 	while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
 }
 
+# LuCI TextValue с переносами ломает UCI: option domain_list 'youtube.com  (без ')
+fix_multiline_domain_list() {
+	local tmp line in_domain=0 payload="" prefix=""
+
+	grep -q 'option domain_list' "$WDtt_CFG" 2>/dev/null || return 0
+	if grep -E "^[[:space:]]*option domain_list '[^']+'[[:space:]]*$" "$WDtt_CFG" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
+	while read -r line || [ -n "$line" ]; do
+		case "$line" in
+			*"option domain_list"*)
+				in_domain=1
+				prefix="${line%%option domain_list*}"
+				line="${line#*option domain_list}"
+				line="$(echo "$line" | sed 's/^[[:space:]]*//')"
+				payload="${line#\'}"
+				if [ "$payload" != "$line" ]; then
+					case "$payload" in
+						*\'*)
+							payload="${payload%%\'*}"
+							payload="$(normalize_domain_list_text "$payload")"
+							[ -n "$payload" ] && echo "${prefix}option domain_list '${payload}'" >> "$tmp"
+							in_domain=0
+							payload=""
+							continue
+							;;
+					esac
+				else
+					payload=""
+				fi
+				continue
+				;;
+		esac
+		if [ "$in_domain" -eq 1 ]; then
+			line="$(trim_line "$line")"
+			case "$line" in
+				\'*\')
+					line="${line#\'}"
+					line="${line%\'}"
+					[ -n "$payload" ] && payload="${payload},${line}" || payload="$line"
+					payload="$(normalize_domain_list_text "$payload")"
+					[ -n "$payload" ] && echo "${prefix}option domain_list '${payload}'" >> "$tmp"
+					in_domain=0
+					payload=""
+					continue
+					;;
+				*)
+					[ -n "$line" ] && payload="${payload:+$payload,}${line}"
+					continue
+					;;
+			esac
+		fi
+		echo "$line" >> "$tmp"
+	done < "$WDtt_CFG"
+
+	if [ "$in_domain" -eq 1 ] && [ -n "$payload" ]; then
+		payload="$(normalize_domain_list_text "$payload")"
+		[ -n "$payload" ] && echo "${prefix}option domain_list '${payload}'" >> "$tmp"
+	fi
+
+	mv "$tmp" "$WDtt_CFG"
+	log "normalized multiline domain_list"
+}
+
 fix_multiline_hashes() {
 	local tmp line in_hashes=0 payload="" prefix=""
 
@@ -348,6 +414,7 @@ fix_multiline_hashes() {
 
 fix_option_domain_lines
 fix_globals_list_domains
+fix_multiline_domain_list
 fix_multiline_hashes
 migrate_rules_to_domain_list
 purge_ghost_list_domains_from_file
