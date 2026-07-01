@@ -31,13 +31,15 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@f8f8b83e33d113fd9c33facdef51411de77bc2b4/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.7.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.7.4+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+
+**wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 
 **Selective routing** требует **`dnsmasq-full`** (nftset). Пакет `dnsmasq` без `-full` не подходит — они взаимоисключающие на OpenWrt.
 
@@ -67,7 +69,7 @@ nft list set inet wdtt wdtt_route
 /usr/libexec/wdtt/routing reload wg-wdtt
 ```
 
-Если jsDelivr доступен, но GitHub releases — нет, скопируйте бинарник с ПК:
+Если jsDelivr и GitHub недоступны с роутера, скопируйте бинарник с ПК:
 
 ```bash
 # на ПК: скачайте wdttd-linux-arm64 с Releases

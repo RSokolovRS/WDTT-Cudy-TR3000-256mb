@@ -60,3 +60,16 @@ jobs:
           files: |
             artifacts/wdttd-linux-arm64/wdttd-linux-arm64
           generate_release_notes: true
+
+      - name: Sync bin/ on main for jsDelivr CDN
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          mkdir -p bin
+          cp artifacts/wdttd-linux-arm64/wdttd-linux-arm64 bin/wdttd-linux-arm64
+          git add bin/wdttd-linux-arm64
+          git diff --staged --quiet && exit 0
+          git commit -m "chore: sync bin/wdttd-linux-arm64 for jsDelivr (${GITHUB_REF_NAME})"
+          git push origin main

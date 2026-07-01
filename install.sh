@@ -17,6 +17,7 @@ set +e
 
 WDTT_INSTALL_VERSION="3.7.4"
 WDTT_ROUTING_VERSION="3.7.3"
+WDTT_BIN_TAG="v3.7.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -301,32 +302,78 @@ install_repo_file() {
 	download_repo_file "$relpath" "$dest" "$label"
 }
 
+bin_is_valid() {
+	local f="$1" min="${2:-1048576}"
+
+	[ -f "$f" ] || return 1
+	[ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -ge "$min" ] || return 1
+	head -c 4 "$f" 2>/dev/null | grep -q 'ELF' || return 1
+	return 0
+}
+
+try_download_bin() {
+	local url="$1" dest="$2"
+
+	rm -f "$dest"
+	msg "  try bin: $url"
+	if download_file "$url" "$dest" 2>/dev/null && bin_is_valid "$dest"; then
+		return 0
+	fi
+	rm -f "$dest"
+	return 1
+}
+
 install_bin() {
-	local dest="$1" url
+	local dest="$1" goarch="${2:-arm64}" relpath url gh_url
+
+	relpath="bin/wdttd-linux-${goarch}"
 
 	# Локальный бинарник (скопирован с ПК): WDTT_LOCAL_BIN=/tmp/wdttd sh install.sh
 	if [ -n "$WDTT_LOCAL_BIN" ] && [ -f "$WDTT_LOCAL_BIN" ]; then
 		msg "  using local: $WDTT_LOCAL_BIN"
 		cp -f "$WDTT_LOCAL_BIN" "$dest"
 		chmod 0755 "$dest"
-		return 0
+		bin_is_valid "$dest" && return 0
+		err "  WDTT_LOCAL_BIN не похож на ELF arm64"
+		return 1
 	fi
 
+	# jsDelivr (файл в репо bin/) — работает когда github.com/releases заблокирован
 	for url in \
-		"$RELEASE_BIN_URL" \
-		"https://ghproxy.net/$RELEASE_BIN_URL" \
-		"https://mirror.ghproxy.com/$RELEASE_BIN_URL"
+		"${JSDELIVR_PIN}/${relpath}" \
+		"${JSDELIVR_URL}/${relpath}" \
+		"https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${WDTT_BIN_TAG}/${relpath}" \
+		"${RAW_PIN}/${relpath}" \
+		"${RAW_URL}/${relpath}"
 	do
-		msg "  try bin: $url"
-		if download_file "$url" "$dest"; then
-			return 0
-		fi
+		try_download_bin "$url" "$dest" && return 0
 	done
 
-	if find_release_binary "arm64" "$DOWNLOAD_DIR/binurl.txt"; then
-		if download_file "$(cat "$DOWNLOAD_DIR/binurl.txt")" "$dest"; then
-			return 0
-		fi
+	# GitHub Releases + зеркала
+	for gh_url in \
+		"$RELEASE_BIN_URL" \
+		"https://ghproxy.net/$RELEASE_BIN_URL" \
+		"https://mirror.ghproxy.com/$RELEASE_BIN_URL" \
+		"https://ghfast.top/$RELEASE_BIN_URL"
+	do
+		try_download_bin "$gh_url" "$dest" && return 0
+	done
+
+	if find_release_binary "$goarch" "$DOWNLOAD_DIR/binurl.txt"; then
+		url="$(cat "$DOWNLOAD_DIR/binurl.txt" 2>/dev/null)"
+		try_download_bin "$url" "$dest" && return 0
+		for gh_url in \
+			"https://ghproxy.net/$url" \
+			"https://mirror.ghproxy.com/$url"
+		do
+			try_download_bin "$gh_url" "$dest" && return 0
+		done
+	fi
+
+	if bin_is_valid /usr/sbin/wdttd; then
+		warn "  CDN/GitHub недоступны — используем уже установленный /usr/sbin/wdttd"
+		cp -f /usr/sbin/wdttd "$dest"
+		return 0
 	fi
 
 	return 1
@@ -447,11 +494,12 @@ install_from_source() {
 	mkdir -p "$LUCI_VIEW"
 
 	msg "Step 1/3: wdttd binary..."
-	if ! install_bin "$DOWNLOAD_DIR/wdttd"; then
+	if ! install_bin "$DOWNLOAD_DIR/wdttd" "$goarch"; then
 		err "Cannot download wdttd-linux-${goarch}"
-		err "GitHub недоступен с роутера? Скопируйте с ПК:"
+		err "jsDelivr/GitHub недоступны? С ПК:"
 		err "  scp wdttd-linux-arm64 root@ROUTER:/tmp/wdttd"
 		err "  WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh"
+		err "Или: sh scripts/install-from-pc.sh root@ROUTER"
 		exit 1
 	fi
 	cp -f "$DOWNLOAD_DIR/wdttd" /usr/sbin/wdttd

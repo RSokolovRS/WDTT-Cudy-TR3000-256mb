@@ -18,6 +18,8 @@ mkdir -p "$TMP"
 
 echo "=== Download wdttd v${VERSION} on PC ==="
 curl -fsSL -L -o "$TMP/wdttd" \
+	"https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/bin/wdttd-linux-arm64" || \
+curl -fsSL -L -o "$TMP/wdttd" \
 	"$REPO/releases/download/v${VERSION}/wdttd-linux-arm64"
 
 echo "=== Bundle repo files ==="
