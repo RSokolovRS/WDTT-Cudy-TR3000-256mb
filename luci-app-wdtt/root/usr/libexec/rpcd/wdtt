@@ -14,6 +14,33 @@ wdtt_connect() {
 	return 0
 }
 
+wdtt_routing_info() {
+	local section type enabled domains n iface
+	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+	iface="${iface:-wg-wdtt}"
+
+	json_init
+	json_add_string routing_mode "$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+	json_add_string state_file "$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+') || n=0
+	json_add_int route_ips "$n"
+	json_add_array rules
+	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.\\([^.=]*\\)=rule\$/\\1/p"); do
+		type="$(uci -q get wdtt.${section}.type 2>/dev/null)"
+		enabled="$(uci -q get wdtt.${section}.enabled 2>/dev/null)"
+		[ -z "$enabled" ] && enabled="1"
+		domains="$(uci -q get wdtt.${section}.domain_list 2>/dev/null)"
+		json_add_object
+		json_add_string name "$section"
+		json_add_string type "${type:-route}"
+		json_add_string enabled "$enabled"
+		json_add_string domains "${domains:-}"
+		json_close_object
+	done
+	json_close_array
+	json_dump
+}
+
 wdtt_apply_config() {
 	local iface mode
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
@@ -26,6 +53,10 @@ wdtt_apply_config() {
 	return 0
 }
 
+wdtt_apply_rules() {
+	wdtt_apply_config
+}
+
 wdtt_disconnect() {
 	uci -q set wdtt.globals.enabled='0' || return 1
 	uci -q commit wdtt || return 1
@@ -36,7 +67,7 @@ wdtt_disconnect() {
 
 case "$1" in
 	list)
-		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {}, "apply_config": {} }'
+		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {}, "apply_config": {}, "apply_rules": {}, "routing_info": {} }'
 		;;
 	call)
 		method="${2:-}"
@@ -127,6 +158,20 @@ case "$1" in
 					json_add_string error "apply_config failed"
 					json_dump
 				fi
+				;;
+			apply_rules)
+				if wdtt_apply_rules; then
+					json_init
+					json_add_string result "ok"
+					json_dump
+				else
+					json_init
+					json_add_string error "apply_rules failed"
+					json_dump
+				fi
+				;;
+			routing_info)
+				wdtt_routing_info
 				;;
 		esac
 		;;

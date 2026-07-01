@@ -4,7 +4,7 @@
 		"read": {
 			"uci": [ "wdtt" ],
 			"ubus": {
-				"wdtt": [ "status", "logs" ]
+				"wdtt": [ "status", "logs", "routing_info" ]
 			},
 			"file": {
 				"/var/run/wdtt/status.json": [ "read" ],
@@ -14,7 +14,7 @@
 		"write": {
 			"uci": [ "wdtt" ],
 			"ubus": {
-				"wdtt": [ "captcha", "connect", "disconnect", "apply_config" ]
+				"wdtt": [ "captcha", "connect", "disconnect", "apply_config", "apply_rules" ]
 			}
 		}
 	}

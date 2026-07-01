@@ -34,9 +34,14 @@ var callDisconnect = rpc.declare({
 	method: 'disconnect'
 });
 
-var callApplyConfig = rpc.declare({
+var callApplyRules = rpc.declare({
 	object: 'wdtt',
-	method: 'apply_config'
+	method: 'apply_rules'
+});
+
+var callRoutingInfo = rpc.declare({
+	object: 'wdtt',
+	method: 'routing_info'
 });
 
 function formatBytes(n) {
@@ -100,6 +105,9 @@ return view.extend({
 	render: function(data) {
 		var m, s, o, status = data[1] || {};
 		var self = this;
+		self.wdttMap = null;
+		self._lastLogText = '';
+		self._lastRulesText = '';
 
 		m = new form.Map('wdtt', wdttPageTitle(status), wdttPageDescription(status));
 
@@ -164,7 +172,7 @@ return view.extend({
 
 		/* --- Правила маршрутизации (только selective; туннель не перезапускается) --- */
 		s = m.section(form.TypedSection, 'rule', _('Правила маршрутизации'),
-			_('Куда направлять трафик в уже открытый туннель. Save & Apply обновляет правила без отключения VPN.'));
+			_('Определяют, какой трафик идёт через WDTT. Работает в режиме «Выборочная».'));
 		s.anonymous = false;
 		s.addremove = true;
 
@@ -215,6 +223,20 @@ return view.extend({
 		o.placeholder = 'https://example.com/list.txt';
 		o.rmempty = true;
 
+		s = m.section(form.NamedSection, 'globals', 'globals', '');
+		s.render = L.bind(function() {
+			return E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'cbi-page-actions' }, [
+					E('button', {
+						'class': 'btn cbi-button cbi-button-apply important',
+						'click': ui.createHandlerFn(self, self.handleApplyRules)
+					}, _('Принять изменения'))
+				]),
+				E('p', { 'class': 'hint' },
+					_('Сохраняет правила в UCI и перезагружает маршрутизацию без отключения туннеля.'))
+			]);
+		}, s);
+
 		/* --- Статус --- */
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Статус'));
 
@@ -240,9 +262,20 @@ return view.extend({
 
 		s.render = L.bind(function() {
 			return E('div', { 'class': 'cbi-section' }, [
+				E('h4', {}, _('Правила маршрутизации')),
+				E('pre', {
+					'id': 'wdtt-rules-log',
+					'style': 'max-height:160px;overflow:auto;font-size:12px;background:#252526;color:#d4d4d4;padding:10px;border-radius:4px;margin:0 0 12px;'
+				}, _('Загрузка...')),
+				E('h4', {}, _('Трафик')),
+				E('pre', {
+					'id': 'wdtt-traffic-line',
+					'style': 'font-size:12px;background:#252526;color:#4ec9b0;padding:8px 10px;border-radius:4px;margin:0 0 12px;white-space:pre;'
+				}, '-'),
+				E('h4', {}, _('Лог wdttd')),
 				E('pre', {
 					'id': 'wdtt-log-view',
-					'style': 'max-height:400px;overflow:auto;font-size:12px;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;'
+					'style': 'max-height:320px;overflow:auto;font-size:12px;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;margin:0;'
 				}, _('Загрузка...'))
 			]);
 		}, s);
@@ -257,12 +290,7 @@ return view.extend({
 
 		poll.add(L.bind(this.pollStatus, this), 3);
 
-		var mapSave = m.save.bind(m);
-		m.save = function() {
-			return mapSave().then(function() {
-				return callApplyConfig().catch(function() { return {}; });
-			});
-		};
+		self.wdttMap = m;
 
 		return m.render();
 	},
@@ -340,11 +368,57 @@ return view.extend({
 			E('tr', {}, [E('td', {}, _('Работает')), E('td', {}, st.running ? _('Да') : _('Нет'))]),
 			E('tr', {}, [E('td', {}, _('WireGuard')), E('td', {}, st.wg_applied ? _('Поднят') : _('Нет'))]),
 			E('tr', {}, [E('td', {}, _('Воркеры')), E('td', {}, String(st.workers || 0))]),
-			E('tr', {}, [E('td', {}, _('RX')), E('td', {}, formatBytes(st.rx_bytes))]),
-			E('tr', {}, [E('td', {}, _('TX')), E('td', {}, formatBytes(st.tx_bytes))]),
 			E('tr', {}, [E('td', {}, _('Uptime')), E('td', {}, (st.uptime_sec || 0) + ' s')]),
 			st.last_error ? E('tr', {}, [E('td', {}, _('Ошибка')), E('td', { 'style': 'color:#c00' }, st.last_error)]) : ''
 		]);
+	},
+
+	formatRulesLog: function(info) {
+		info = info || {};
+		var lines = [];
+		var mode = info.routing_mode || 'selective';
+		var modeLabel = mode === 'full' ? _('Полный') : _('Выборочная');
+
+		lines.push(_('Режим:') + ' «' + modeLabel + '»   ' +
+			_('Состояние:') + ' ' + (info.state_file || '-'));
+		lines.push(_('IP в wdtt_route:') + ' ' + String(info.route_ips || 0));
+
+		var rules = info.rules || [];
+		if (!rules.length) {
+			lines.push(_('(правил нет)'));
+		} else {
+			rules.forEach(function(r) {
+				var en = r.enabled === '0' ? _('выкл') : _('вкл');
+				var dom = r.domains || _('(нет доменов)');
+				lines.push('[' + r.name + '] ' + r.type + ' ' + en + ': ' + dom);
+			});
+		}
+		return lines.join('\n');
+	},
+
+	updateTrafficLine: function(st) {
+		st = st || {};
+		var el = document.getElementById('wdtt-traffic-line');
+		if (!el)
+			return;
+		el.textContent = _('RX:') + ' ' + formatBytes(st.rx_bytes) +
+			'   ' + _('TX:') + ' ' + formatBytes(st.tx_bytes) +
+			'   ' + _('Воркеры:') + ' ' + String(st.workers || 0) +
+			'   ' + _('Uptime:') + ' ' + String(st.uptime_sec || 0) + ' s';
+	},
+
+	refreshRulesLog: function() {
+		var self = this;
+		return callRoutingInfo().catch(function() { return {}; }).then(function(info) {
+			var rulesLog = document.getElementById('wdtt-rules-log');
+			if (!rulesLog)
+				return;
+			var text = self.formatRulesLog(info);
+			if (text !== self._lastRulesText) {
+				dom.content(rulesLog, text);
+				self._lastRulesText = text;
+			}
+		});
 	},
 
 	pollStatus: function() {
@@ -353,18 +427,30 @@ return view.extend({
 			callStatus().catch(function() { return {}; }),
 			callLogs(150).catch(function() { return { lines: [] }; })
 		]).then(function(res) {
+			var st = res[0] || {};
 			var panel = document.getElementById('wdtt-status-panel');
-			if (panel) dom.content(panel, self.renderStatus(res[0]));
+			if (panel)
+				dom.content(panel, self.renderStatus(st));
+
+			self.updateTrafficLine(st);
+			self.refreshRulesLog();
 
 			var logView = document.getElementById('wdtt-log-view');
 			if (logView) {
 				var lines = (res[1] && res[1].lines) || [];
-				dom.content(logView, lines.length ? lines.join('\n') : _('Лог пуст'));
+				var newLog = lines.length ? lines.join('\n') : _('Лог пуст');
+				if (newLog !== self._lastLogText) {
+					var atBottom = logView.scrollHeight - logView.scrollTop <= logView.clientHeight + 5;
+					dom.content(logView, newLog);
+					self._lastLogText = newLog;
+					if (atBottom)
+						logView.scrollTop = logView.scrollHeight;
+				}
 			}
 
 			var capPanel = document.getElementById('wdtt-captcha-panel');
-			if (capPanel && res[0] && res[0].state === 'captcha_required') {
-				var cap = res[0].captcha || {};
+			if (capPanel && st.state === 'captcha_required') {
+				var cap = st.captcha || {};
 				var ta = document.getElementById('wdtt-captcha-url');
 				if (cap.redirect_uri && (!ta || ta.value !== cap.redirect_uri)) {
 					dom.content(capPanel, self.renderCaptchaPanel(cap));
@@ -434,6 +520,24 @@ return view.extend({
 			self.syncEnabledFlag('0');
 			ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель остановлен')), 3000);
 			return self.pollStatus();
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
+	},
+
+	handleApplyRules: function() {
+		var self = this;
+		var map = self.wdttMap;
+		if (!map)
+			return Promise.resolve();
+		return map.save().then(function() {
+			return callApplyRules();
+		}).then(function(res) {
+			if (res && res.error)
+				throw new Error(res.error);
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Правила применены')), 3000, 'success');
+			self._lastRulesText = '';
+			return self.refreshRulesLog();
 		}).catch(function(e) {
 			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
 		});
