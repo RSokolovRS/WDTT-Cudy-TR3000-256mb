@@ -34,9 +34,15 @@ var callDisconnect = rpc.declare({
 	method: 'disconnect'
 });
 
+var callApplyConfig = rpc.declare({
+	object: 'wdtt',
+	method: 'apply_config'
+});
+
 var callApplyRules = rpc.declare({
 	object: 'wdtt',
-	method: 'apply_rules'
+	method: 'apply_rules',
+	params: [ 'rules' ]
 });
 
 var callRoutingInfo = rpc.declare({
@@ -44,29 +50,68 @@ var callRoutingInfo = rpc.declare({
 	method: 'routing_info'
 });
 
-function syncRuleDomainsFromDom() {
-	function syncSid(sid, value) {
+function syncRuleFieldsFromDom() {
+	function syncSid(sid, enabled, domains) {
 		if (!sid)
 			return;
-		var normalized = normalizeDomainList(value);
-		if (normalized)
-			uci.set('wdtt', sid, 'domain_list', normalized);
-		else
-			uci.unset('wdtt', sid, 'domain_list');
+		if (enabled != null)
+			uci.set('wdtt', sid, 'enabled', enabled ? '1' : '0');
+		if (domains != null) {
+			var normalized = normalizeDomainList(domains);
+			if (normalized)
+				uci.set('wdtt', sid, 'domain_list', normalized);
+			else
+				uci.unset('wdtt', sid, 'domain_list');
+		}
 	}
+
+	document.querySelectorAll('.cbi-section-node[data-section-id]').forEach(function(node) {
+		var sid = node.getAttribute('data-section-id');
+		var ta = node.querySelector('textarea');
+		var en = node.querySelector('input[type="checkbox"][name*=".enabled"], input[type="checkbox"][id*=".enabled"]');
+		syncSid(
+			sid,
+			en ? en.checked : null,
+			ta ? ta.value : null
+		);
+	});
 
 	document.querySelectorAll('[id^="widget.cbid.wdtt."][id$=".domain_list"]').forEach(function(widget) {
 		var m = /^widget\.cbid\.wdtt\.(.+)\.domain_list$/.exec(widget.id);
-		var ta = widget.querySelector('textarea');
+		var ta = widget.querySelector('textarea') || (widget.tagName === 'TEXTAREA' ? widget : null);
 		if (m && ta)
-			syncSid(m[1], ta.value);
+			syncSid(m[1], null, ta.value);
 	});
 
 	document.querySelectorAll('textarea[name^="cbid.wdtt."][name$=".domain_list"]').forEach(function(ta) {
 		var m = /^cbid\.wdtt\.(.+)\.domain_list$/.exec(ta.name);
 		if (m)
-			syncSid(m[1], ta.value);
+			syncSid(m[1], null, ta.value);
 	});
+
+	document.querySelectorAll('input[type="checkbox"][name^="cbid.wdtt."][name$=".enabled"]').forEach(function(el) {
+		var m = /^cbid\.wdtt\.(.+)\.enabled$/.exec(el.name);
+		if (m)
+			syncSid(m[1], el.checked, null);
+	});
+}
+
+function collectRulesFromDom() {
+	var rules = {};
+
+	document.querySelectorAll('.cbi-section-node[data-section-id]').forEach(function(node) {
+		var sid = node.getAttribute('data-section-id');
+		var ta = node.querySelector('textarea');
+		var en = node.querySelector('input[type="checkbox"][name*=".enabled"], input[type="checkbox"][id*=".enabled"]');
+		if (!sid)
+			return;
+		rules[sid] = {
+			enabled: en ? (en.checked ? '1' : '0') : '1',
+			domain_list: ta ? normalizeDomainList(ta.value) : ''
+		};
+	});
+
+	return rules;
 }
 
 function normalizeRulesArray(rules) {
@@ -193,7 +238,7 @@ return view.extend({
 		o.default = 'vkcalls';
 
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
-			_('Полный — весь трафик через WDTT. Выборочный — в туннель только то, что задано правилами ниже.'));
+			_('Полный — весь трафик через WDTT. Выборочный — только правила ниже. После смены режима: Save & Apply внизу страницы.'));
 		o.value('selective', _('Выборочный (правила)'));
 		o.value('full', _('Полный туннель'));
 		o.default = 'selective';
@@ -329,6 +374,13 @@ return view.extend({
 
 		self.wdttMap = m;
 
+		var mapSave = m.save.bind(m);
+		m.save = function() {
+			return mapSave().then(function() {
+				return callApplyConfig().catch(function() { return {}; });
+			});
+		};
+
 		return m.render();
 	},
 
@@ -422,6 +474,15 @@ return view.extend({
 
 		lines.push(_('Режим:') + ' «' + modeLabel + '»   ' +
 			_('Состояние:') + ' ' + (info.state_file || '-'));
+		if (mode === 'full') {
+			lines.push(_('Полный туннель — правила доменов не используются.'));
+			if (info.state_file === 'selective' || info.state_file === 'stale-selective')
+				lines.push(_('(!) Selective routing ещё активен: Save & Apply внизу, затем «Переподключить».'));
+			else if (info.state_file !== 'full')
+				lines.push(_('(!) Save & Apply внизу страницы, затем «Переподключить» для полного туннеля.'));
+			return lines.join('\n');
+		}
+
 		lines.push(_('IP в wdtt_route:') + ' ' + String(info.route_ips || 0));
 
 		if (info.uci_parse_ok === false)
@@ -588,11 +649,12 @@ return view.extend({
 		var map = self.wdttMap;
 		if (!map)
 			return Promise.resolve();
+		var rulesPayload = collectRulesFromDom();
 		return map.parse().then(function() {
-			syncRuleDomainsFromDom();
+			syncRuleFieldsFromDom();
 			return uci.save();
 		}).then(function() {
-			return callApplyRules();
+			return callApplyRules(rulesPayload);
 		}).then(function(res) {
 			if (res && res.error)
 				throw new Error(res.error);

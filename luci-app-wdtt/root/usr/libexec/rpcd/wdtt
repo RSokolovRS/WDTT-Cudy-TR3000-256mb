@@ -174,16 +174,23 @@ wdtt_rules_from_file() {
 }
 
 wdtt_routing_info() {
-	local n iface uci_ok=1
+	local n iface uci_ok=1 mode state_file
 
 	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 	iface="${iface:-wg-wdtt}"
-
+	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
 	wdtt_uci_parse_ok || uci_ok=0
 
+	state_file="$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	if [ "$mode" = "full" ]; then
+		state_file="full"
+	elif [ "$state_file" = "full" ] && [ "$mode" != "full" ]; then
+		state_file="stale-selective"
+	fi
+
 	json_init
-	json_add_string routing_mode "$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
-	json_add_string state_file "$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	json_add_string routing_mode "$mode"
+	json_add_string state_file "$state_file"
 	json_add_boolean uci_parse_ok "$uci_ok"
 	n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+') || n=0
 	json_add_int route_ips "$n"
@@ -198,20 +205,74 @@ wdtt_routing_info() {
 	json_dump
 }
 
-wdtt_apply_config() {
+wdtt_merge_rules_json() {
+	local section enabled domain_list
+
+	json_get_type _t rules 2>/dev/null || return 0
+	[ "$_t" = "object" ] || return 0
+
+	json_select rules
+	json_get_keys sections
+	for section in $sections; do
+		json_select "$section"
+		json_get_var enabled enabled
+		json_get_var domain_list domain_list
+		json_select ..
+		[ -n "$section" ] || continue
+		uci -q get "wdtt.${section}" >/dev/null 2>&1 || uci -q set "wdtt.${section}=rule"
+		uci -q set "wdtt.${section}.type=route" 2>/dev/null
+		[ -n "$enabled" ] && uci -q set "wdtt.${section}.enabled=${enabled}"
+		if [ -n "$domain_list" ]; then
+			domain_list="$(printf '%s' "$domain_list" | tr ',;\n\r\t' ',,,,' | sed 's/,,*/,/g;s/^,//;s/,$//')"
+			uci -q set "wdtt.${section}.domain_list=${domain_list}"
+		else
+			uci -q delete "wdtt.${section}.domain_list" 2>/dev/null
+		fi
+	done
+	json_select ..
+	uci -q commit wdtt 2>/dev/null || return 1
+	return 0
+}
+
+wdtt_apply_rules() {
 	local iface mode
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
 	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
 	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 	iface="${iface:-wg-wdtt}"
-	if [ "$mode" != "full" ] && ip link show "$iface" >/dev/null 2>&1; then
+	[ "$mode" = "full" ] && return 0
+	if ip link show "$iface" >/dev/null 2>&1; then
 		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
 	fi
 	return 0
 }
 
-wdtt_apply_rules() {
-	wdtt_apply_config
+wdtt_apply_config() {
+	local iface mode enabled old_mode restart=0
+	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
+	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+	iface="${iface:-wg-wdtt}"
+	enabled="$(uci -q get wdtt.globals.enabled 2>/dev/null)"
+	old_mode="$(tr -d '\r\n' < /var/run/wdtt/last_routing_mode 2>/dev/null)"
+	[ "$old_mode" != "$mode" ] && restart=1
+
+	mkdir -p /var/run/wdtt
+	printf '%s\n' "$mode" > /var/run/wdtt/last_routing_mode
+
+	if [ "$mode" = "full" ]; then
+		/usr/libexec/wdtt/routing stop 2>/dev/null || true
+		printf '%s\n' "full" > /var/run/wdtt/routing.mode
+	elif ip link show "$iface" >/dev/null 2>&1; then
+		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
+	else
+		/usr/libexec/wdtt/routing stop 2>/dev/null || true
+	fi
+
+	if [ "$restart" -eq 1 ] && [ "$enabled" = "1" ] && pgrep -x wdttd >/dev/null 2>&1; then
+		/etc/init.d/wdtt restart 2>/dev/null || true
+	fi
+	return 0
 }
 
 wdtt_disconnect() {
@@ -224,7 +285,7 @@ wdtt_disconnect() {
 
 case "$1" in
 	list)
-		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {}, "apply_config": {}, "apply_rules": {}, "routing_info": {} }'
+		echo '{ "status": {}, "logs": { "tail": 100 }, "captcha": { "token": "" }, "connect": {}, "disconnect": {}, "apply_config": {}, "apply_rules": { "rules": {} }, "routing_info": {} }'
 		;;
 	call)
 		method="${2:-}"
@@ -317,6 +378,8 @@ case "$1" in
 				fi
 				;;
 			apply_rules)
+				json_load "$(cat)"
+				wdtt_merge_rules_json
 				if wdtt_apply_rules; then
 					json_init
 					json_add_string result "ok"
