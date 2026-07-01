@@ -1,10 +1,13 @@
 #!/bin/sh
-# Полная диагностика и починка WDTT selective routing
+# Полная диагностика WDTT (selective + full tunnel)
 
 IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 IFACE="${IFACE:-wg-wdtt}"
+ROUTING_MODE="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+ROUTING_MODE="${ROUTING_MODE:-selective}"
 
 echo "=== WDTT doctor ==="
+echo "routing_mode=${ROUTING_MODE}"
 
 if [ -x /usr/libexec/wdtt/fix-config ]; then
 	/usr/libexec/wdtt/fix-config || true
@@ -19,10 +22,7 @@ if grep -q 'parse_list_domain_line' /usr/libexec/wdtt/routing 2>/dev/null \
 	&& grep -q 'return 0' /usr/libexec/wdtt/routing 2>/dev/null; then
 	echo "OK: routing script"
 else
-	echo "FAIL: routing устарел (нужен v3.7.2+) — sh /tmp/wdtt-install.sh или:"
-	echo "  uclient-fetch -O /usr/libexec/wdtt/routing \\"
-	echo "    https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/main/wdtt-client/files/wdtt-routing"
-	echo "  chmod 755 /usr/libexec/wdtt/routing"
+	echo "FAIL: routing устарел (нужен v3.7.2+) — sh /tmp/wdtt-install.sh"
 fi
 
 echo "--- uci ---"
@@ -38,29 +38,47 @@ else
 fi
 
 echo "--- dnsmasq ---"
-if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --version 2>/dev/null | grep -qi nftset; then
-	echo "OK: dnsmasq nftset"
+if [ "$ROUTING_MODE" = "full" ]; then
+	echo "SKIP: dnsmasq nftset не нужен в режиме full"
 else
-	echo "FAIL: нужен dnsmasq-full (не обычный dnsmasq):"
-	echo "  apk del dnsmasq && apk add dnsmasq-full && /etc/init.d/dnsmasq restart"
-fi
-echo "confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
-if grep -rq wdtt /var/etc/dnsmasq* 2>/dev/null; then
-	echo "OK: wdtt.conf подключён в generated dnsmasq config"
-else
-	echo "WARN: wdtt.conf не виден в /var/etc/dnsmasq* — /etc/init.d/dnsmasq restart"
+	if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --version 2>/dev/null | grep -qi nftset; then
+		echo "OK: dnsmasq nftset"
+	else
+		echo "FAIL: нужен dnsmasq-full:"
+		echo "  apk del dnsmasq && apk add dnsmasq-full && /etc/init.d/dnsmasq restart"
+	fi
+	echo "confdir=$(uci -q get dhcp.@dnsmasq[0].confdir 2>/dev/null)"
+	if grep -rq wdtt /var/etc/dnsmasq* 2>/dev/null; then
+		echo "OK: wdtt.conf подключён в generated dnsmasq config"
+	else
+		echo "WARN: wdtt.conf не виден в /var/etc/dnsmasq* — /etc/init.d/dnsmasq restart"
+	fi
 fi
 
 echo "--- wireguard ---"
 if ip link show "$IFACE" >/dev/null 2>&1; then
 	echo "OK: $IFACE up"
 else
-	echo "WARN: $IFACE down — routing reload может не создать table 100"
-	echo "      Сначала LuCI → Подключить (connected), потом doctor снова"
+	echo "WARN: $IFACE down — сначала LuCI → Подключить"
 fi
 
-echo "--- reload routing ---"
-/usr/libexec/wdtt/routing reload "$IFACE" 2>&1 || true
+if [ "$ROUTING_MODE" = "full" ]; then
+	echo "--- full tunnel ---"
+	/usr/libexec/wdtt/routing stop 2>/dev/null || true
+	mkdir -p /var/run/wdtt
+	printf '%s\n' "full" > /var/run/wdtt/routing.mode
+	echo "OK: selective routing остановлен (режим full)"
+	if ip route show 2>/dev/null | grep -qE "default.*${IFACE}|^default.*dev ${IFACE}"; then
+		echo "OK: default route через $IFACE"
+	elif ip route show 2>/dev/null | grep -q "${IFACE}"; then
+		echo "WARN: $IFACE up, но default route не через WG — LuCI Save & Apply, затем Переподключить"
+	else
+		echo "WARN: нет маршрутов через $IFACE — Переподключить туннель"
+	fi
+else
+	echo "--- reload routing (selective) ---"
+	/usr/libexec/wdtt/routing reload "$IFACE" 2>&1 || true
+fi
 
 echo ""
 /usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
@@ -72,49 +90,65 @@ has_wdtt_domains() {
 	return 1
 }
 
-echo "=== rule type check ==="
-rule_type="$(uci -q get wdtt.route1.type 2>/dev/null)"
-if has_wdtt_domains; then
-	if [ "$rule_type" = "exclusion" ]; then
-		echo "FAIL: route1 type=exclusion — домены идут НАПРЯМУЮ, не в туннель"
-		echo "      uci set wdtt.route1.type='route' && uci commit wdtt"
-		echo "      /usr/libexec/wdtt/routing reload $IFACE"
-	elif [ "$rule_type" = "route" ] || [ -z "$rule_type" ]; then
-		echo "OK: rule type=route (домены в туннель)"
+if [ "$ROUTING_MODE" = "full" ]; then
+	echo "=== full tunnel check ==="
+	state="$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	if [ "$state" = "full" ]; then
+		echo "OK: state_file=full"
+	elif [ "$state" = "selective" ]; then
+		echo "FAIL: state_file=selective при routing_mode=full — doctor только что остановил selective"
+		echo "      LuCI Save & Apply → Переподключить"
 	else
-		echo "WARN: route1 type=${rule_type:-?}"
-	fi
-	enabled="$(uci -q get wdtt.route1.enabled 2>/dev/null)"
-	if [ "$enabled" = "0" ]; then
-		echo "FAIL: route1 enabled=0 — правило ВЫКЛЮЧЕНО"
-		echo "      uci set wdtt.route1.enabled='1' && uci commit wdtt"
+		echo "WARN: state_file=${state}"
 	fi
 else
-	echo "FAIL: нет domain_list — добавьте домены в LuCI → Правила → Домены"
-	echo "      uci set wdtt.route1.domain_list='2ip.ru,youtube.com' && uci commit wdtt"
-fi
+	echo "=== rule type check ==="
+	rules_ok=0
+	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.\\([^.=]*\\)=rule\$/\\1/p"); do
+		rule_type="$(uci -q get "wdtt.${section}.type" 2>/dev/null)"
+		enabled="$(uci -q get "wdtt.${section}.enabled" 2>/dev/null)"
+		domains="$(uci -q get "wdtt.${section}.domain_list" 2>/dev/null)"
+		echo "rule ${section}: type=${rule_type:-route} enabled=${enabled:-1} domains=${domains:-(empty)}"
+		[ "$rule_type" = "exclusion" ] && echo "  FAIL: type=exclusion — домены идут напрямую"
+		[ "$enabled" = "0" ] && [ -n "$domains" ] && echo "  FAIL: enabled=0 — включите правило в LuCI"
+		[ -n "$domains" ] && [ "$enabled" != "0" ] && rules_ok=1
+	done
+	if ! has_wdtt_domains; then
+		echo "FAIL: нет domain_list — LuCI → Правила → Домены → «Принять изменения»"
+	elif [ "$rules_ok" -eq 0 ]; then
+		echo "FAIL: нет активного route-правила с доменами"
+	else
+		echo "OK: route-правила с доменами найдены"
+	fi
 
-echo ""
-echo "=== ghost check ==="
-if grep -qE 'nftset=/(2iw\.|yoltlbe\.com|2iw\.rl)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
-	echo "FAIL: wdtt.conf содержит ghost-домены (2iw.* / yoltlbe.com)"
-	echo "      /usr/libexec/wdtt/fix-config && /usr/libexec/wdtt/routing reload $IFACE"
-elif grep -q '^nftset=' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
-	echo "OK: wdtt.conf домены выглядят нормально"
-else
-	echo "WARN: wdtt.conf пуст — добавьте домены в LuCI → Правила"
-fi
+	echo ""
+	echo "=== ghost check ==="
+	if grep -qE 'nftset=/(2iw\.|yoltlbe\.com|2iw\.rl)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
+		echo "FAIL: wdtt.conf содержит ghost-домены"
+	elif grep -q '^nftset=' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
+		echo "OK: wdtt.conf домены выглядят нормально"
+	else
+		echo "WARN: wdtt.conf пуст — «Принять изменения» в LuCI или routing reload"
+	fi
 
-state="$(cat /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
-if [ "$state" = "selective" ]; then
-	echo "OK: routing active (state_file=selective)"
-else
-	echo "FAIL: state_file=$state (policy routing не применился)"
+	state="$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	if [ "$state" = "selective" ]; then
+		echo "OK: routing active (state_file=selective)"
+	else
+		echo "FAIL: state_file=${state} (policy routing не применился)"
+	fi
 fi
 
 echo ""
 echo "=== Чеклист ==="
-echo "1) LuCI: Правила → Домены (youtube.com, 2ip.ru), Включено, Save & Apply"
-echo "2) Подключить → connected"
-echo "3) /usr/libexec/wdtt/doctor — wdtt_route IPs: 1+, state_file=selective"
-echo "4) С LAN-клиента: curl -4 https://2ip.io (DNS=роутер, DoH off)"
+if [ "$ROUTING_MODE" = "full" ]; then
+	echo "1) LuCI: Режим «Полный» → Save & Apply внизу страницы"
+	echo "2) Переподключить (Отключить → Подключить)"
+	echo "3) doctor: state_file=full, default route через wg-wdtt"
+	echo "4) curl -4 https://2ip.io с LAN-клиента"
+else
+	echo "1) LuCI: Правила → Домены, Включено → «Принять изменения»"
+	echo "2) Подключить → connected"
+	echo "3) doctor — wdtt_route IPs: 1+, state_file=selective"
+	echo "4) curl -4 https://2ip.io с LAN-клиента (DNS=роутер, DoH off)"
+fi

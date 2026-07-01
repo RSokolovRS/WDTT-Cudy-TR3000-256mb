@@ -278,6 +278,66 @@ sanitize_rule_domain_list_uci() {
 	while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
 }
 
+# option domain_list вне config rule (LuCI-баг) → первая rule-секция
+fix_orphan_domain_list() {
+	local tmp line trimmed section="" in_rule=0 orphan="" target="" injected=0 changed=0 val
+
+	grep -qE '^[[:space:]]*option domain_list[[:space:]]' "$WDtt_CFG" 2>/dev/null || return 0
+
+	tmp="$(mktemp /tmp/wdtt-fix.XXXXXX)"
+	while read -r line || [ -n "$line" ]; do
+		trimmed="$(trim_line "$line")"
+		case "$trimmed" in
+			config\ rule\ *)
+				section="${trimmed#config rule }"
+				section="${section#\'}"; section="${section%%\'*}"
+				section="${section#\"}"; section="${section%%\"*}"
+				section="${section%% *}"
+				in_rule=1
+				[ -z "$target" ] && target="$section"
+				echo "$line" >> "$tmp"
+				if [ -n "$orphan" ] && [ "$injected" -eq 0 ]; then
+					echo "	option domain_list '${orphan}'" >> "$tmp"
+					if [ -x /sbin/uci ]; then
+						uci -q set "wdtt.${section}.domain_list=${orphan}" 2>/dev/null
+						uci -q set "wdtt.${section}.enabled=1" 2>/dev/null
+						uci -q set "wdtt.${section}.type=route" 2>/dev/null
+					fi
+					injected=1
+					orphan=""
+					changed=1
+				fi
+				continue
+				;;
+			config\ *)
+				in_rule=0
+				section=""
+				echo "$line" >> "$tmp"
+				continue
+				;;
+			option\ domain_list\ *)
+				val="$(uci_line_value "$trimmed")"
+				val="$(normalize_domain_list_text "$val")"
+				if [ "$in_rule" -eq 1 ]; then
+					[ -n "$val" ] && echo "	option domain_list '${val}'" >> "$tmp"
+				elif [ -n "$val" ]; then
+					orphan="$(merge_domain_list_text "$orphan" "$val")"
+					changed=1
+				fi
+				continue
+				;;
+		esac
+		echo "$line" >> "$tmp"
+	done < "$WDtt_CFG"
+
+	if [ "$changed" -eq 1 ]; then
+		mv "$tmp" "$WDtt_CFG"
+		log "moved orphan domain_list into rule ${target:-unknown}"
+	else
+		rm -f "$tmp"
+	fi
+}
+
 # LuCI TextValue с переносами ломает UCI: option domain_list 'youtube.com  (без ')
 fix_multiline_domain_list() {
 	local tmp line in_domain=0 payload="" prefix=""
@@ -414,6 +474,7 @@ fix_multiline_hashes() {
 
 fix_option_domain_lines
 fix_globals_list_domains
+fix_orphan_domain_list
 fix_multiline_domain_list
 fix_multiline_hashes
 migrate_rules_to_domain_list

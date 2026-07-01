@@ -649,6 +649,9 @@ case "$1" in
 		do_stop
 		;;
 	reload)
+		routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+		[ "$routing_mode" = "full" ] && { do_stop; exit 0; }
+		[ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ] && { do_stop; exit 0; }
 		do_reload
 		EXIT_RC=$?
 		;;
