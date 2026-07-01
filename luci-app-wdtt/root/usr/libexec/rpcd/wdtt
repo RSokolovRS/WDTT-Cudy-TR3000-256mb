@@ -262,7 +262,11 @@ wdtt_apply_config() {
 
 	if [ "$mode" = "full" ]; then
 		/usr/libexec/wdtt/routing stop 2>/dev/null || true
-		printf '%s\n' "full" > /var/run/wdtt/routing.mode
+		if ip link show "$iface" >/dev/null 2>&1; then
+			[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel apply 2>/dev/null || true
+		else
+			printf '%s\n' "full" > /var/run/wdtt/routing.mode
+		fi
 	elif ip link show "$iface" >/dev/null 2>&1; then
 		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
 	else

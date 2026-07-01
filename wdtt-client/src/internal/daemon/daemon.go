@@ -177,8 +177,15 @@ func (d *Daemon) handleEvent(ev core.Event) {
 			} else {
 				var routingErr error
 				if d.cfg != nil && d.cfg.IsSelective() {
+					_ = routing.Stop()
 					if err := routing.Start(d.wg.Iface(), d.cfg); err != nil {
 						log.Printf("[WDTT] selective routing failed: %v", err)
+						routingErr = err
+					}
+				} else {
+					_ = routing.Stop()
+					if err := routing.ApplyFullTunnel(d.wg.Iface()); err != nil {
+						log.Printf("[WDTT] full tunnel setup failed: %v", err)
 						routingErr = err
 					}
 				}

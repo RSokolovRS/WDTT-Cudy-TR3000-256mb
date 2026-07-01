@@ -62,18 +62,34 @@ else
 	echo "WARN: $IFACE down — сначала LuCI → Подключить"
 fi
 
-if [ "$ROUTING_MODE" = "full" ]; then
+	if [ "$ROUTING_MODE" = "full" ]; then
 	echo "--- full tunnel ---"
 	/usr/libexec/wdtt/routing stop 2>/dev/null || true
-	mkdir -p /var/run/wdtt
-	printf '%s\n' "full" > /var/run/wdtt/routing.mode
-	echo "OK: selective routing остановлен (режим full)"
-	if ip route show 2>/dev/null | grep -qE "default.*${IFACE}|^default.*dev ${IFACE}"; then
-		echo "OK: default route через $IFACE"
-	elif ip route show 2>/dev/null | grep -q "${IFACE}"; then
-		echo "WARN: $IFACE up, но default route не через WG — LuCI Save & Apply, затем Переподключить"
+	if ip link show "$IFACE" >/dev/null 2>&1; then
+		[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel apply 2>/dev/null || true
 	else
-		echo "WARN: нет маршрутов через $IFACE — Переподключить туннель"
+		mkdir -p /var/run/wdtt
+		printf '%s\n' "full" > /var/run/wdtt/routing.mode
+	fi
+	if ip route show 0.0.0.0/1 2>/dev/null | grep -q "dev $IFACE"; then
+		echo "OK: route 0.0.0.0/1 dev $IFACE"
+	else
+		echo "FAIL: нет route 0.0.0.0/1 dev $IFACE"
+	fi
+	if ip route show 128.0.0.0/1 2>/dev/null | grep -q "dev $IFACE"; then
+		echo "OK: route 128.0.0.0/1 dev $IFACE"
+	else
+		echo "FAIL: нет route 128.0.0.0/1 dev $IFACE"
+	fi
+	if nft list chain inet fw4 srcnat 2>/dev/null | grep -q "oifname \"$IFACE\""; then
+		echo "OK: masquerade oifname $IFACE"
+	else
+		echo "WARN: нет masquerade на $IFACE — sh /etc/firewall.wdtt && fw4 reload"
+	fi
+	if sysctl -n net.ipv4.ip_forward 2>/dev/null | grep -q '^1$'; then
+		echo "OK: ip_forward=1"
+	else
+		echo "WARN: ip_forward=0 — sysctl -w net.ipv4.ip_forward=1"
 	fi
 else
 	echo "--- reload routing (selective) ---"

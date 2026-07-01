@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.7.9"
+WDTT_INSTALL_VERSION="3.8.0"
 WDTT_ROUTING_VERSION="3.7.4"
-WDTT_BIN_TAG="v3.7.2"
+WDTT_BIN_TAG="v3.8.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -456,7 +456,7 @@ install_wdtt_helpers() {
 	local f dest ok=0
 
 	mkdir -p /usr/libexec/wdtt
-	for f in fix-config doctor; do
+	for f in fix-config doctor full-tunnel; do
 		dest="/usr/libexec/wdtt/$f"
 		if download_file "$RAW_URL/wdtt-client/files/wdtt-$f" "$dest" 2>/dev/null \
 			|| install_repo_file "wdtt-client/files/wdtt-$f" "$dest" "$f" 2>/dev/null; then

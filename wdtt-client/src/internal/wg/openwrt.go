@@ -143,8 +143,13 @@ func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode)
 	// В режиме full — весь трафик через WG (как раньше).
 	// В selective — маршруты задаёт /usr/libexec/wdtt/routing (policy routing).
 	if mode == ModeFull {
+		if len(allowedIPs) == 0 {
+			allowedIPs = []string{"0.0.0.0/1", "128.0.0.0/1"}
+		}
 		for _, cidr := range allowedIPs {
-			if run("ip", "route", "add", cidr, "dev", m.iface) == nil {
+			if run("ip", "route", "replace", cidr, "dev", m.iface) == nil {
+				routes = append(routes, "dev:"+cidr)
+			} else if run("ip", "route", "add", cidr, "dev", m.iface) == nil {
 				routes = append(routes, "dev:"+cidr)
 			}
 		}

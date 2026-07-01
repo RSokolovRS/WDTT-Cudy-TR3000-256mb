@@ -41,3 +41,16 @@ func Reload(iface string) error {
 	}
 	return nil
 }
+
+// ApplyFullTunnel настраивает default routes и NAT для режима full (LAN → wg).
+func ApplyFullTunnel(iface string) error {
+	if iface == "" {
+		iface = "wg-wdtt"
+	}
+	cmd := exec.Command("/usr/libexec/wdtt/full-tunnel", "apply")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("full-tunnel apply: %w — %s", err, string(out))
+	}
+	return nil
+}
