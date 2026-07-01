@@ -147,9 +147,9 @@ return view.extend({
 		o.value('legacy', _('Legacy (капча)'));
 		o.default = 'vkcalls';
 
-		o = s.option(form.ListValue, 'routing_mode', _('Маршрутизация'),
-			_('Selective — как Podkop: только выбранные домены/устройства через WDTT. Full — весь трафик.'));
-		o.value('selective', _('Выборочная (Podkop)'));
+		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
+			_('Полный — весь трафик через WDTT. Выборочный — в туннель только то, что задано правилами ниже.'));
+		o.value('selective', _('Выборочный (правила)'));
 		o.value('full', _('Полный туннель'));
 		o.default = 'selective';
 
@@ -162,9 +162,9 @@ return view.extend({
 		o.default = 'wg-wdtt';
 		o.readonly = true;
 
-		/* --- Правила маршрутизации (секции как в Podkop) --- */
+		/* --- Правила маршрутизации (только selective; туннель не перезапускается) --- */
 		s = m.section(form.TypedSection, 'rule', _('Правила маршрутизации'),
-			_('Определяют, какой трафик идёт через WDTT. Работает в режиме «Выборочная».'));
+			_('Куда направлять трафик в уже открытый туннель. Save & Apply обновляет правила без отключения VPN.'));
 		s.anonymous = false;
 		s.addremove = true;
 
@@ -206,7 +206,7 @@ return view.extend({
 		o.rmempty = true;
 
 		o = s.option(form.DynamicList, 'source_ip', _('IP устройства (полная маршрутизация)'),
-			_('Весь трафик этого устройства через WDTT, как fully_routed_ips в Podkop.'));
+			_('Весь трафик этого устройства через WDTT, независимо от доменов в правиле.'));
 		o.datatype = 'ipaddr';
 		o.placeholder = '192.168.1.50';
 

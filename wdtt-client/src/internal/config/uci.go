@@ -17,7 +17,7 @@ const (
 	RoutingSelective RoutingMode = "selective"
 )
 
-// Rule — секция маршрутизации (аналог секции Podkop).
+// Rule — секция правил маршрутизации (UCI rule).
 type Rule struct {
 	Name      string
 	Enabled   bool
@@ -99,7 +99,7 @@ func Load(path string) (*Settings, error) {
 		Rules:       rules,
 	}
 
-	// routing_mode: selective (default, как Podkop) | full
+	// routing_mode: selective (правила) | full (весь трафик)
 	switch strings.ToLower(strings.TrimSpace(g["routing_mode"])) {
 	case "full":
 		s.RoutingMode = RoutingFull

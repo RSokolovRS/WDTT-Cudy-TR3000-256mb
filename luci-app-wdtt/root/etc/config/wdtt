@@ -13,7 +13,7 @@ config globals 'globals'
 	option vk_auth_mode 'vkcalls'
 	option device_id ''
 	option iface 'wg-wdtt'
-	# selective = как Podkop (списки в туннель, остальное напрямую)
+	# selective = правила решают, что идёт в туннель; full = весь трафик через WDTT
 	# full = весь трафик роутера через WDTT
 	option routing_mode 'selective'
 

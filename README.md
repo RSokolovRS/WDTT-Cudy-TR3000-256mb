@@ -1,6 +1,6 @@
 # WDTT OpenWRT — Cudy TR3000 256MB
 
-OpenWRT-клиент WDTT (WireGuard over VK TURN) с выборочной маршрутизацией как в [Podkop](https://github.com/itdoginfo/podkop).
+OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выборочным туннелем и отдельными правилами маршрутизации.
 
 ## Быстрая установка на роутер
 
@@ -27,13 +27,46 @@ wget -O /tmp/wdtt-install.sh \
 sh /tmp/wdtt-install.sh
 ```
 
-**Чистая переустановка** (удаление, очистка кэша, свежий конфиг; peer/password/hashes сохраняются):
+**Чистая переустановка** (удаление, очистка кэша, свежий конфиг; peer/password/hashes **сохраняются**):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@f8f8b83e33d113fd9c33facdef51411de77bc2b4/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
+
+**Полное удаление** (WDTT снят с роутера, `/etc/config/wdtt` **удаляется**):
+
+```bash
+wget -O /tmp/wdtt-install.sh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+sh /tmp/wdtt-install.sh --uninstall
+```
+
+Если `install.sh` уже на роутере: `sh /tmp/wdtt-install.sh --uninstall`.
+
+В LuCI **ничего отключать не нужно** — установщик сам вызывает `stop`, снимает routing (`wg-wdtt`, nft, ip rule) и удаляет LuCI-файлы. Кнопка «Отключить» нужна только если хотите временно остановить туннель **без** удаления.
+
+При зависшем `wdttd` перед `--uninstall`:
+
+```bash
+/etc/init.d/wdtt stop
+killall wdttd 2>/dev/null
+ip link del wg-wdtt 2>/dev/null
+sh /tmp/wdtt-install.sh --uninstall
+```
+
+Проверка после удаления:
+
+```bash
+ls /usr/sbin/wdttd /etc/config/wdtt 2>&1
+pgrep wdttd || echo "OK: wdttd not running"
+```
+
+| Команда | Конфиг UCI | LuCI |
+|--------|------------|------|
+| `--uninstall` | удаляется | удаляется |
+| `--clean` | сохраняется (peer/password/hashes) | переустанавливается |
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
@@ -160,14 +193,29 @@ sh <(uclient-fetch --header="Authorization: Bearer $GITHUB_TOKEN" -q -O - \
 | `wdtt-client` | Go-демон `wdttd` + selective routing |
 | `luci-app-wdtt` | LuCI: туннель, правила, статус, логи |
 
-## Маршрутизация (как Podkop)
+## Туннель и правила — как это устроено
+
+**Туннель** (кнопки **Подключить / Отключить**) — это WireGuard `wg-wdtt` и демон `wdttd`. Пока туннель открыт, он живёт отдельно от списка доменов.
+
+**Правила маршрутизации** (LuCI → секции `rule`, **Save & Apply**) — только для режима **выборочная**: какой трафик пускать в уже открытый туннель. Добавление, изменение или удаление правила **не рвёт туннель** — применяется `routing reload` без перезапуска `wdttd`.
+
+| Действие | Туннель | Правила |
+|----------|---------|---------|
+| **Подключить** | поднимается | применяются (selective) |
+| **Отключить** | опускается | снимаются |
+| **Save & Apply** (домены, rule) | **остаётся** | перечитываются |
+| Смена peer/password/hashes | нужен **Отключить → Подключить** | — |
+
+Режим **полный туннель** — весь трафик через WDTT; секции `rule` не используются.
+
+## Маршрутизация
 
 По умолчанию режим **selective** — в туннель идут только выбранные ресурсы:
 
 1. **Правила `route`** — домены (через dnsmasq **nftset** → nft sets), подсети, URL-списки
 2. **Правила `exclusion`** — трафик напрямую
 3. **`routing_excluded_ip`** — устройства, которые всегда мимо туннеля (высший приоритет)
-4. **`source_ip`** в правиле — весь трафик устройства через WDTT (`fully_routed_ips` в Podkop)
+4. **`source_ip`** в правиле — весь трафик выбранного устройства через WDTT
 
 Режим **full** — весь трафик роутера через WDTT.
 
@@ -224,9 +272,9 @@ make package/luci-app-wdtt/compile V=s
 
 **Сервисы → WDTT VPN**:
 1. VPS (`IP:56000`), пароль, VK-хеши
-2. Режим маршрутизации: **Выборочная**
-3. Добавьте правила (YouTube, geoblock и т.д.)
-4. **Подключить**
+2. **Подключить** — поднимается туннель (полный или выборочный — см. «Режим туннеля»)
+3. В режиме **выборочный**: добавьте правила (домены, устройства) → **Save & Apply** (туннель остаётся открытым)
+4. **Отключить** — туннель опускается
 
 ### UCI
 
@@ -261,22 +309,17 @@ uci commit wdtt
 ## Архитектура
 
 ```
-LuCI → UCI → procd → wdttd
-                      ├── core (VK TURN / DTLS)
-                      ├── wg-wdtt
-                      └── /usr/libexec/wdtt/routing
-                            ├── dnsmasq nftset → inet wdtt (домены)
-                            ├── nft prerouting fwmark 0x777474
-                            └── ip rule → table 100 → wg-wdtt
+Подключить/Отключить → wdttd → wg-wdtt (туннель)
+Save & Apply правил → routing reload (только selective, туннель не трогаем)
+
+wdttd
+  ├── core (VK TURN / DTLS)
+  ├── wg-wdtt
+  └── /usr/libexec/wdtt/routing  (selective)
+        ├── dnsmasq nftset → inet wdtt (домены)
+        ├── nft prerouting fwmark 0x777474
+        └── ip rule → table 100 → wg-wdtt
 ```
-
-## Совместимость с Podkop
-
-WDTT и Podkop можно использовать **вместе**:
-- WDTT поднимает `wg-wdtt`
-- В Podkop создайте секцию типа **VPN** с интерфейсом `wg-wdtt`
-
-Либо используйте встроенные правила WDTT без Podkop.
 
 ## VK Auth (VKCalls без капчи)
 
@@ -323,4 +366,3 @@ GPL-3.0
 
 - [proxy-turn-vk-android](https://github.com/amurcanov/proxy-turn-vk-android)
 - [PWDTT](https://github.com/luminescq/PWDTT)
-- [Podkop](https://github.com/itdoginfo/podkop)
