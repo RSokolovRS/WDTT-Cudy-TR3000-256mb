@@ -44,6 +44,31 @@ var callRoutingInfo = rpc.declare({
 	method: 'routing_info'
 });
 
+function syncRuleDomainsFromDom() {
+	function syncSid(sid, value) {
+		if (!sid)
+			return;
+		var normalized = normalizeDomainList(value);
+		if (normalized)
+			uci.set('wdtt', sid, 'domain_list', normalized);
+		else
+			uci.unset('wdtt', sid, 'domain_list');
+	}
+
+	document.querySelectorAll('[id^="widget.cbid.wdtt."][id$=".domain_list"]').forEach(function(widget) {
+		var m = /^widget\.cbid\.wdtt\.(.+)\.domain_list$/.exec(widget.id);
+		var ta = widget.querySelector('textarea');
+		if (m && ta)
+			syncSid(m[1], ta.value);
+	});
+
+	document.querySelectorAll('textarea[name^="cbid.wdtt."][name$=".domain_list"]').forEach(function(ta) {
+		var m = /^cbid\.wdtt\.(.+)\.domain_list$/.exec(ta.name);
+		if (m)
+			syncSid(m[1], ta.value);
+	});
+}
+
 function normalizeRulesArray(rules) {
 	if (!rules)
 		return [];
@@ -392,6 +417,8 @@ return view.extend({
 		var modeLabel = mode === 'full' ? _('Полный') : _('Выборочная');
 		var rules = normalizeRulesArray(info.rules);
 		var hasEnabledRoute = false;
+		var hasDisabledRoute = false;
+		var hasRouteWithoutDomains = false;
 
 		lines.push(_('Режим:') + ' «' + modeLabel + '»   ' +
 			_('Состояние:') + ' ' + (info.state_file || '-'));
@@ -409,10 +436,20 @@ return view.extend({
 				var dom = r.domains || _('(нет доменов)');
 				if (r.enabled !== '0' && r.type === 'route' && r.domains)
 					hasEnabledRoute = true;
+				if (r.enabled === '0' && r.type === 'route')
+					hasDisabledRoute = true;
+				if (r.type === 'route' && !r.domains)
+					hasRouteWithoutDomains = true;
 				lines.push('[' + r.name + '] ' + r.type + ' ' + en + ': ' + dom);
 			});
-			if (!hasEnabledRoute && (info.route_ips || 0) === 0)
-				lines.push(_('(!) Включите правило и нажмите «Принять изменения».'));
+			if (hasRouteWithoutDomains)
+				lines.push(_('(!) В поле «Домены» введите сайты и нажмите «Принять изменения».'));
+			else if (hasDisabledRoute && !hasEnabledRoute)
+				lines.push(_('(!) Включите правило (галочка «Включено») и нажмите «Принять изменения».'));
+			else if (!hasEnabledRoute && (info.route_ips || 0) === 0)
+				lines.push(_('(!) Нет активных route-правил с доменами.'));
+			else if (hasEnabledRoute && (info.route_ips || 0) === 0)
+				lines.push(_('(i) IP появятся через ~1 мин после DNS (routing reload).'));
 		}
 		return lines.join('\n');
 	},
@@ -551,7 +588,10 @@ return view.extend({
 		var map = self.wdttMap;
 		if (!map)
 			return Promise.resolve();
-		return map.save().then(function() {
+		return map.parse().then(function() {
+			syncRuleDomainsFromDom();
+			return uci.save();
+		}).then(function() {
 			return callApplyRules();
 		}).then(function(res) {
 			if (res && res.error)
