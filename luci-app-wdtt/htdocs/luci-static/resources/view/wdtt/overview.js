@@ -44,6 +44,18 @@ var callRoutingInfo = rpc.declare({
 	method: 'routing_info'
 });
 
+function normalizeRulesArray(rules) {
+	if (!rules)
+		return [];
+	if (Array.isArray(rules))
+		return rules;
+	if (typeof rules === 'object')
+		return Object.keys(rules).sort(function(a, b) {
+			return Number(a) - Number(b);
+		}).map(function(k) { return rules[k]; });
+	return [];
+}
+
 function formatBytes(n) {
 	n = Number(n) || 0;
 	if (n < 1024) return n + ' B';
@@ -378,20 +390,29 @@ return view.extend({
 		var lines = [];
 		var mode = info.routing_mode || 'selective';
 		var modeLabel = mode === 'full' ? _('Полный') : _('Выборочная');
+		var rules = normalizeRulesArray(info.rules);
+		var hasEnabledRoute = false;
 
 		lines.push(_('Режим:') + ' «' + modeLabel + '»   ' +
 			_('Состояние:') + ' ' + (info.state_file || '-'));
 		lines.push(_('IP в wdtt_route:') + ' ' + String(info.route_ips || 0));
 
-		var rules = info.rules || [];
+		if (info.uci_parse_ok === false)
+			lines.push(_('(!) UCI parse error — правила читаются из /etc/config/wdtt'));
+
 		if (!rules.length) {
-			lines.push(_('(правил нет)'));
+			lines.push(_('(правил нет в UCI)'));
+			lines.push(_('Введите домены выше и нажмите «Принять изменения».'));
 		} else {
 			rules.forEach(function(r) {
 				var en = r.enabled === '0' ? _('выкл') : _('вкл');
 				var dom = r.domains || _('(нет доменов)');
+				if (r.enabled !== '0' && r.type === 'route' && r.domains)
+					hasEnabledRoute = true;
 				lines.push('[' + r.name + '] ' + r.type + ' ' + en + ': ' + dom);
 			});
+			if (!hasEnabledRoute && (info.route_ips || 0) === 0)
+				lines.push(_('(!) Включите правило и нажмите «Принять изменения».'));
 		}
 		return lines.join('\n');
 	},

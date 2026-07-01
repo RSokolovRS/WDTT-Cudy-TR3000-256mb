@@ -19,7 +19,7 @@ config globals 'globals'
 
 # Пустое правило — домены в LuCI → «Домены» (option domain_list, не list domain)
 config rule 'route1'
-	option enabled '0'
+	option enabled '1'
 	option type 'route'
 	# option domain_list 'youtube.com,2ip.ru'
 

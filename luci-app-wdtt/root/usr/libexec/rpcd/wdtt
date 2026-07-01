@@ -14,29 +14,135 @@ wdtt_connect() {
 	return 0
 }
 
+wdtt_uci_parse_ok() {
+	uci show wdtt 2>&1 | grep -qi 'parse error' && return 1
+	return 0
+}
+
+wdtt_uci_line_value() {
+	local line="$1" val
+	val="${line#*\'}"
+	if [ "$val" != "$line" ]; then
+		val="${val%%\'*}"
+		printf '%s' "$val"
+		return 0
+	fi
+	val="${line#*\"}"
+	val="${val%%\"*}"
+	printf '%s' "$val"
+}
+
+wdtt_rule_section_name() {
+	local line="$1" section
+	section="${line#config rule }"
+	section="${section#\'}"; section="${section%%\'*}"
+	if [ "$section" = "${line#config rule }" ]; then
+		section="${section#\"}"; section="${section%%\"*}"
+	fi
+	section="${section%% *}"
+	printf '%s' "$section"
+}
+
+wdtt_rule_json_entry() {
+	local section="$1" type="$2" enabled="$3" domains="$4"
+	[ -n "$section" ] || return 0
+	json_add_object
+	json_add_string name "$section"
+	json_add_string type "${type:-route}"
+	json_add_string enabled "${enabled:-1}"
+	json_add_string domains "${domains:-}"
+	json_close_object
+}
+
+wdtt_rule_info_cb() {
+	local section="$1"
+	local type enabled domains
+
+	type="$(uci -q get "wdtt.${section}.type" 2>/dev/null)"
+	enabled="$(uci -q get "wdtt.${section}.enabled" 2>/dev/null)"
+	[ -z "$enabled" ] && enabled="1"
+	domains="$(uci -q get "wdtt.${section}.domain_list" 2>/dev/null)"
+	wdtt_rule_json_entry "$section" "$type" "$enabled" "$domains"
+}
+
+wdtt_rules_from_file() {
+	local line section="" type="route" enabled="1" domains="" in_rule=0 val
+
+	[ -r /etc/config/wdtt ] || return 0
+
+	while read -r line || [ -n "$line" ]; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		case "$line" in
+			""|\#*) continue ;;
+			config\ rule\ *)
+				[ -n "$section" ] && wdtt_rule_json_entry "$section" "$type" "$enabled" "$domains"
+				section="$(wdtt_rule_section_name "$line")"
+				type="route"
+				enabled="1"
+				domains=""
+				in_rule=1
+				continue
+				;;
+			config\ *)
+				[ -n "$section" ] && wdtt_rule_json_entry "$section" "$type" "$enabled" "$domains"
+				section=""
+				domains=""
+				in_rule=0
+				continue
+				;;
+		esac
+		[ "$in_rule" -eq 1 ] || continue
+		case "$line" in
+			option\ type\ *)
+				type="$(wdtt_uci_line_value "$line")"
+				;;
+			option\ enabled\ *)
+				enabled="$(wdtt_uci_line_value "$line")"
+				;;
+			option\ domain_list\ *)
+				val="$(wdtt_uci_line_value "$line")"
+				[ -n "$domains" ] && [ -n "$val" ] && domains="$domains,$val"
+				[ -z "$domains" ] && domains="$val"
+				;;
+			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
+				val="${line#list domain}"
+				val="${val#list domains}"
+				val="${val#"${val%%[![:space:]]*}"}"
+				val="${val#\'}"; val="${val%%\'*}"
+				if [ "$val" = "$line" ]; then
+					val="${val#\"}"; val="${val%%\"*}"
+				fi
+				[ -n "$val" ] || continue
+				[ -n "$domains" ] && domains="$domains,$val"
+				[ -z "$domains" ] && domains="$val"
+				;;
+		esac
+	done < /etc/config/wdtt
+	[ -n "$section" ] && wdtt_rule_json_entry "$section" "$type" "$enabled" "$domains"
+}
+
 wdtt_routing_info() {
-	local section type enabled domains n iface
+	local n iface uci_ok=1
+
 	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 	iface="${iface:-wg-wdtt}"
+
+	wdtt_uci_parse_ok || uci_ok=0
 
 	json_init
 	json_add_string routing_mode "$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
 	json_add_string state_file "$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	json_add_boolean uci_parse_ok "$uci_ok"
 	n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+') || n=0
 	json_add_int route_ips "$n"
 	json_add_array rules
-	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\.\\([^.=]*\\)=rule\$/\\1/p"); do
-		type="$(uci -q get wdtt.${section}.type 2>/dev/null)"
-		enabled="$(uci -q get wdtt.${section}.enabled 2>/dev/null)"
-		[ -z "$enabled" ] && enabled="1"
-		domains="$(uci -q get wdtt.${section}.domain_list 2>/dev/null)"
-		json_add_object
-		json_add_string name "$section"
-		json_add_string type "${type:-route}"
-		json_add_string enabled "$enabled"
-		json_add_string domains "${domains:-}"
-		json_close_object
-	done
+	if [ "$uci_ok" -eq 1 ]; then
+		config_load wdtt
+		config_foreach wdtt_rule_info_cb rule
+	elif [ -r /etc/config/wdtt ]; then
+		wdtt_rules_from_file
+	fi
 	json_close_array
 	json_dump
 }
