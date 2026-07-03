@@ -1,8 +1,11 @@
 #!/bin/sh
-# Restart WDTT when WAN comes up
+# Restart WDTT when WAN or WWAN comes up
 
 [ "$ACTION" = "ifup" ] || exit 0
-[ "$INTERFACE" = "wan" ] || exit 0
+case "$INTERFACE" in
+wan|wwan) ;;
+*) exit 0 ;;
+esac
 
 enabled="$(uci -q get wdtt.globals.enabled 2>/dev/null)"
 [ "$enabled" = "1" ] || exit 0
