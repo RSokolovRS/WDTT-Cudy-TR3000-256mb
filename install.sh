@@ -15,14 +15,14 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.8.0"
+WDTT_INSTALL_VERSION="3.8.1"
 WDTT_ROUTING_VERSION="3.7.4"
 WDTT_BIN_TAG="v3.8.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="4b70065"
+REPO_REF="5a4c951"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
