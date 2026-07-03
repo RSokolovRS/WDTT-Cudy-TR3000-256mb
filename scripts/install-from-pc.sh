@@ -1,5 +1,5 @@
 #!/bin/sh
-# Установка WDTT с компьютера (GitHub/CDN недоступны с роутера)
+# Установка WDTT с компьютера (jsDelivr/GitHub недоступны с роутера)
 # Запуск на ПК:
 #   sh scripts/install-from-pc.sh root@192.168.1.1
 #   sh scripts/install-from-pc.sh root@192.168.1.1 --clean
@@ -11,23 +11,36 @@ CLEAN_ARG=""
 [ "$2" = "--clean" ] && CLEAN_ARG="--clean"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="/tmp/wdtt-pc-install"
-VERSION="3.7.2"
+VERSION="3.8.3"
 REPO="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb"
+PIN="bbf03b3"
 
 mkdir -p "$TMP"
 
-echo "=== Download wdttd v${VERSION} on PC ==="
-curl -fsSL -L -o "$TMP/wdttd" \
-	"https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/bin/wdttd-linux-arm64" || \
-curl -fsSL -L -o "$TMP/wdttd" \
-	"$REPO/releases/download/v${VERSION}/wdttd-linux-arm64"
+echo "=== wdttd v${VERSION} on PC ==="
+if [ -f "$DIR/bin/wdttd-linux-arm64" ]; then
+	cp -f "$DIR/bin/wdttd-linux-arm64" "$TMP/wdttd"
+	echo "  using local bin/wdttd-linux-arm64"
+else
+	curl -fsSL -L -o "$TMP/wdttd" \
+		"https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@${PIN}/bin/wdttd-linux-arm64" || \
+	curl -fsSL -L -o "$TMP/wdttd" \
+		"${REPO}/releases/download/v${VERSION}/wdttd-linux-arm64" || \
+	curl -fsSL -L -o "$TMP/wdttd" \
+		"https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/${PIN}/bin/wdttd-linux-arm64"
+fi
+chmod +x "$TMP/wdttd"
+ls -la "$TMP/wdttd"
 
-echo "=== Bundle repo files ==="
+echo "=== Bundle repo files (offline) ==="
 tar czf "$TMP/wdtt-repo.tar.gz" -C "$DIR" \
 	install.sh \
+	bin/wdttd-linux-arm64 \
 	wdtt-client/files/wdtt-routing \
 	wdtt-client/files/wdtt-fix-config \
 	wdtt-client/files/wdtt-doctor \
+	wdtt-client/files/wdtt-full-tunnel \
+	wdtt-client/files/wdtt-uplink \
 	luci-app-wdtt/root/etc/init.d/wdtt \
 	luci-app-wdtt/root/etc/config/wdtt \
 	luci-app-wdtt/root/etc/firewall.wdtt \
@@ -57,4 +70,5 @@ ssh "$ROUTER" "set -e
 	sh /tmp/wdtt-install.sh ${CLEAN_ARG}"
 
 echo "=== Done ==="
-echo "LuCI: Services → WDTT VPN → Правила → Домены (Save & Apply)"
+echo "LuCI: Services → WDTT VPN → peer/password → Подключить"
+echo "Проверка: ssh $ROUTER '/usr/libexec/wdtt/doctor'"

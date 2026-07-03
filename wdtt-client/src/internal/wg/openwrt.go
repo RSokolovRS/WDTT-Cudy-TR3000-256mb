@@ -33,6 +33,7 @@ var vkExcludeCIDRs = []string{
 	"195.82.146.0/23",
 	"213.180.193.0/24",
 	"77.88.0.0/18",
+	"91.231.0.0/16",
 	"8.8.8.0/24",
 	"1.1.1.0/24",
 }
@@ -119,24 +120,22 @@ func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode,
 	}
 
 	var routes []string
-	gw := gatewayForUplink(uplinkIface)
-	if gw != "" {
-		for _, ip := range turnIPs {
-			cidr := ip + "/32"
-			if run("ip", "route", "add", cidr, "via", gw) == nil {
-				routes = append(routes, cidr)
-			}
+	gw, uplinkDev := gatewayForUplink(uplinkIface)
+	for _, ip := range turnIPs {
+		cidr := ip + "/32"
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
 		}
-		for _, cidr := range vkExcludeCIDRs {
-			if run("ip", "route", "add", cidr, "via", gw) == nil {
-				routes = append(routes, cidr)
-			}
+	}
+	for _, cidr := range vkExcludeCIDRs {
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
 		}
-		for _, dns := range localDNSServers() {
-			cidr := dns + "/32"
-			if run("ip", "route", "add", cidr, "via", gw) == nil {
-				routes = append(routes, cidr)
-			}
+	}
+	for _, dns := range localDNSServers() {
+		cidr := dns + "/32"
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
 		}
 	}
 
@@ -231,19 +230,59 @@ func run(name string, args ...string) error {
 }
 
 func defaultGateway() string {
-	return gatewayForUplink("auto")
+	gw, _ := gatewayForUplink("auto")
+	return gw
 }
 
-func gatewayForUplink(uplink string) string {
+func gatewayForUplink(uplink string) (gw string, dev string) {
 	uplink = strings.TrimSpace(uplink)
 	if uplink == "" {
 		uplink = "auto"
 	}
-	dev := resolveUplinkDevice(uplink)
-	if gw := gatewayOnDevice(dev); gw != "" {
-		return gw
+
+	if _, err := exec.LookPath("/usr/libexec/wdtt/uplink"); err == nil {
+		if out, err := exec.Command("/usr/libexec/wdtt/uplink", "device", uplink).Output(); err == nil {
+			if d := strings.TrimSpace(string(out)); d != "" && !strings.HasPrefix(d, "/sys") {
+				dev = d
+			}
+		}
+		if out, err := exec.Command("/usr/libexec/wdtt/uplink", "gateway", uplink).Output(); err == nil {
+			gw = strings.TrimSpace(string(out))
+		}
 	}
-	return gatewayOnDevice("")
+
+	if dev == "" {
+		dev = resolveUplinkDevice(uplink)
+	}
+	if gw == "" && dev != "" {
+		gw = gatewayOnDevice(dev)
+	}
+	if gw == "" {
+		gw = gatewayOnDevice("")
+	}
+	return gw, dev
+}
+
+func addBypassRoute(cidr, gw, dev string) bool {
+	if gw != "" && dev != "" && gw != dev {
+		if run("ip", "route", "replace", cidr, "via", gw, "dev", dev) == nil {
+			return true
+		}
+		return run("ip", "route", "add", cidr, "via", gw, "dev", dev) == nil
+	}
+	if gw != "" && !strings.HasPrefix(gw, "/sys") {
+		if run("ip", "route", "replace", cidr, "via", gw) == nil {
+			return true
+		}
+		return run("ip", "route", "add", cidr, "via", gw) == nil
+	}
+	if dev != "" {
+		if run("ip", "route", "replace", cidr, "dev", dev) == nil {
+			return true
+		}
+		return run("ip", "route", "add", cidr, "dev", dev) == nil
+	}
+	return false
 }
 
 func resolveUplinkDevice(uplink string) string {

@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.8.2"
+WDTT_INSTALL_VERSION="3.8.3"
 WDTT_ROUTING_VERSION="3.7.4"
-WDTT_BIN_TAG="v3.8.2"
+WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -496,10 +496,13 @@ install_from_source() {
 	msg "Step 1/3: wdttd binary..."
 	if ! install_bin "$DOWNLOAD_DIR/wdttd" "$goarch"; then
 		err "Cannot download wdttd-linux-${goarch}"
-		err "jsDelivr/GitHub недоступны? С ПК:"
-		err "  scp wdttd-linux-arm64 root@ROUTER:/tmp/wdttd"
-		err "  WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh"
-		err "Или: sh scripts/install-from-pc.sh root@ROUTER"
+		err "jsDelivr/GitHub недоступны с роутера? Установка с ПК:"
+		err "  sh scripts/install-from-pc.sh root@ROUTER --clean"
+		err "Или вручную:"
+		err "  scp bin/wdttd-linux-arm64 install.sh root@ROUTER:/tmp/"
+		err "  scp -r wdtt-client luci-app-wdtt root@ROUTER:/tmp/wdtt-repo/"
+		err "  ssh root@ROUTER 'WDTT_SKIP_PROBE=1 WDTT_LOCAL_BIN=/tmp/wdttd-linux-arm64 \\"
+		err "    WDTT_LOCAL_REPO=/tmp/wdtt-repo sh /tmp/install.sh --clean'"
 		exit 1
 	fi
 	cp -f "$DOWNLOAD_DIR/wdttd" /usr/sbin/wdttd
