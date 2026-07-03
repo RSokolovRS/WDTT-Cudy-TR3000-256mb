@@ -70,7 +70,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.8.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.8.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 
@@ -272,9 +272,10 @@ make package/luci-app-wdtt/compile V=s
 
 **Сервисы → WDTT VPN**:
 1. VPS (`IP:56000`), пароль, VK-хеши
-2. **Подключить** — поднимается туннель (полный или выборочный — см. «Режим туннеля»)
-3. В режиме **выборочный**: добавьте правила (домены, устройства) → **Save & Apply** (туннель остаётся открытым)
-4. **Отключить** — туннель опускается
+2. **Интернет (uplink)** — Авто / WAN / WWAN (кнопки в «Статус» или список в настройках): через какой канал идут VK/TURN
+3. **Подключить** — поднимается туннель (полный или выборочный — см. «Режим туннеля»)
+4. В режиме **выборочный**: добавьте правила (домены, устройства) → **Save & Apply** (туннель остаётся открытым)
+5. **Отключить** — туннель опускается
 
 ### UCI
 
@@ -284,6 +285,7 @@ uci set wdtt.globals.peer='203.0.113.10:56000'
 uci set wdtt.globals.password='your-password'
 uci set wdtt.globals.hashes='abc123'
 uci set wdtt.globals.routing_mode='selective'
+uci set wdtt.globals.uplink_iface='auto'
 uci set wdtt.globals.workers='12'
 
 uci set wdtt.youtube=rule

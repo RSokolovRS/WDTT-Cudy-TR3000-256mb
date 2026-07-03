@@ -43,6 +43,7 @@ type Settings struct {
 	VKAuthMode           string
 	DeviceID             string
 	Iface                string
+	UplinkIface          string // auto | wan | wwan | network section / device
 	RoutingMode          RoutingMode
 	RoutingExcludedIPs   []string
 	Rules                []Rule
@@ -96,6 +97,7 @@ func Load(path string) (*Settings, error) {
 		VKAuthMode:  defaultString(g["vk_auth_mode"], "vkcalls"),
 		DeviceID:    defaultString(g["device_id"], ""),
 		Iface:       defaultString(g["iface"], "wg-wdtt"),
+		UplinkIface: defaultString(g["uplink_iface"], "auto"),
 		Rules:       rules,
 	}
 

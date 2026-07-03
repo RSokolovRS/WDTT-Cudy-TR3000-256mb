@@ -68,10 +68,10 @@ func (m *Manager) Apply(conf string, turnIPs []string) error {
 	m.mu.Lock()
 	mode := m.mode
 	m.mu.Unlock()
-	return m.ApplyWithMode(conf, turnIPs, mode)
+	return m.ApplyWithMode(conf, turnIPs, mode, "")
 }
 
-func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode) error {
+func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode, uplinkIface string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mode = mode
@@ -119,7 +119,7 @@ func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode)
 	}
 
 	var routes []string
-	gw := defaultGateway()
+	gw := gatewayForUplink(uplinkIface)
 	if gw != "" {
 		for _, ip := range turnIPs {
 			cidr := ip + "/32"
@@ -231,7 +231,46 @@ func run(name string, args ...string) error {
 }
 
 func defaultGateway() string {
-	cmd := exec.Command("ip", "route", "show", "default")
+	return gatewayForUplink("auto")
+}
+
+func gatewayForUplink(uplink string) string {
+	uplink = strings.TrimSpace(uplink)
+	if uplink == "" {
+		uplink = "auto"
+	}
+	dev := resolveUplinkDevice(uplink)
+	if gw := gatewayOnDevice(dev); gw != "" {
+		return gw
+	}
+	return gatewayOnDevice("")
+}
+
+func resolveUplinkDevice(uplink string) string {
+	if uplink == "" || uplink == "auto" {
+		return ""
+	}
+	out, err := exec.Command("uci", "-q", "get", "network."+uplink+".device").Output()
+	if err == nil {
+		if d := strings.TrimSpace(string(out)); d != "" {
+			return d
+		}
+	}
+	out, err = exec.Command("uci", "-q", "get", "network."+uplink+".ifname").Output()
+	if err == nil {
+		if d := strings.TrimSpace(string(out)); d != "" {
+			return d
+		}
+	}
+	return uplink
+}
+
+func gatewayOnDevice(dev string) string {
+	args := []string{"route", "show", "default"}
+	if dev != "" {
+		args = append(args, "dev", dev)
+	}
+	cmd := exec.Command("ip", args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

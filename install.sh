@@ -15,14 +15,14 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.8.1"
+WDTT_INSTALL_VERSION="3.8.2"
 WDTT_ROUTING_VERSION="3.7.4"
-WDTT_BIN_TAG="v3.8.0"
+WDTT_BIN_TAG="v3.8.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
 # jsDelivr кэширует @main — pin на коммит (обновлять при релизе)
-REPO_REF="5a4c951"
+REPO_REF="3ef7748"
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
@@ -456,7 +456,7 @@ install_wdtt_helpers() {
 	local f dest ok=0
 
 	mkdir -p /usr/libexec/wdtt
-	for f in fix-config doctor full-tunnel; do
+	for f in fix-config doctor full-tunnel uplink; do
 		dest="/usr/libexec/wdtt/$f"
 		if download_file "$RAW_URL/wdtt-client/files/wdtt-$f" "$dest" 2>/dev/null \
 			|| install_repo_file "wdtt-client/files/wdtt-$f" "$dest" "$f" 2>/dev/null; then

@@ -35,6 +35,14 @@ else
 	echo "captcha_mode: $(uci -q get wdtt.globals.captcha_mode 2>/dev/null)"
 	echo "vk_auth_mode: $(uci -q get wdtt.globals.vk_auth_mode 2>/dev/null)"
 	echo "package_version: $(tr -d '\r\n' < /usr/share/wdtt/version 2>/dev/null || echo unknown)"
+	echo "uplink_iface: $(uci -q get wdtt.globals.uplink_iface 2>/dev/null || echo auto)"
+fi
+
+echo "--- uplink ---"
+if [ -x /usr/libexec/wdtt/uplink ]; then
+	/usr/libexec/wdtt/uplink status 2>/dev/null || echo "WARN: uplink status failed"
+else
+	echo "WARN: wdtt-uplink missing — sh install.sh"
 fi
 
 echo "--- dnsmasq ---"
@@ -62,7 +70,7 @@ else
 	echo "WARN: $IFACE down — сначала LuCI → Подключить"
 fi
 
-	if [ "$ROUTING_MODE" = "full" ]; then
+if [ "$ROUTING_MODE" = "full" ]; then
 	echo "--- full tunnel ---"
 	/usr/libexec/wdtt/routing stop 2>/dev/null || true
 	if ip link show "$IFACE" >/dev/null 2>&1; then

@@ -191,6 +191,15 @@ wdtt_routing_info() {
 	json_init
 	json_add_string routing_mode "$mode"
 	json_add_string state_file "$state_file"
+	if [ -x /usr/libexec/wdtt/uplink ]; then
+		json_add_string uplink_iface "$(/usr/libexec/wdtt/uplink setting 2>/dev/null)"
+		json_add_string uplink_device "$(/usr/libexec/wdtt/uplink device 2>/dev/null)"
+		json_add_string uplink_gateway "$(/usr/libexec/wdtt/uplink gateway 2>/dev/null)"
+	else
+		json_add_string uplink_iface "$(uci -q get wdtt.globals.uplink_iface 2>/dev/null)"
+		json_add_string uplink_device ""
+		json_add_string uplink_gateway ""
+	fi
 	json_add_boolean uci_parse_ok "$uci_ok"
 	n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '^\s+[0-9]+\.[0-9]+') || n=0
 	json_add_int route_ips "$n"
@@ -248,17 +257,22 @@ wdtt_apply_rules() {
 }
 
 wdtt_apply_config() {
-	local iface mode enabled old_mode restart=0
+	local iface mode enabled old_mode old_uplink uplink restart=0
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
 	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+	uplink="$(uci -q get wdtt.globals.uplink_iface 2>/dev/null)"
+	uplink="${uplink:-auto}"
 	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 	iface="${iface:-wg-wdtt}"
 	enabled="$(uci -q get wdtt.globals.enabled 2>/dev/null)"
 	old_mode="$(tr -d '\r\n' < /var/run/wdtt/last_routing_mode 2>/dev/null)"
+	old_uplink="$(tr -d '\r\n' < /var/run/wdtt/last_uplink_iface 2>/dev/null)"
 	[ "$old_mode" != "$mode" ] && restart=1
+	[ "$old_uplink" != "$uplink" ] && restart=1
 
 	mkdir -p /var/run/wdtt
 	printf '%s\n' "$mode" > /var/run/wdtt/last_routing_mode
+	printf '%s\n' "$uplink" > /var/run/wdtt/last_uplink_iface
 
 	if [ "$mode" = "full" ]; then
 		/usr/libexec/wdtt/routing stop 2>/dev/null || true

@@ -16,6 +16,7 @@ config globals 'globals'
 	# selective = правила решают, что идёт в туннель; full = весь трафик через WDTT
 	# full = весь трафик роутера через WDTT
 	option routing_mode 'selective'
+	option uplink_iface 'auto'
 
 # Пустое правило — домены в LuCI → «Домены» (option domain_list, не list domain)
 config rule 'route1'

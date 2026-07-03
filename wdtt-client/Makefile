@@ -52,6 +52,7 @@ define Package/wdtt-client/install
 	$(INSTALL_BIN) ./files/wdtt-fix-config $(1)/usr/libexec/wdtt/fix-config
 	$(INSTALL_BIN) ./files/wdtt-doctor $(1)/usr/libexec/wdtt/doctor
 	$(INSTALL_BIN) ./files/wdtt-full-tunnel $(1)/usr/libexec/wdtt/full-tunnel
+	$(INSTALL_BIN) ./files/wdtt-uplink $(1)/usr/libexec/wdtt/uplink
 	$(INSTALL_DIR) $(1)/var/run/wdtt
 endef
 

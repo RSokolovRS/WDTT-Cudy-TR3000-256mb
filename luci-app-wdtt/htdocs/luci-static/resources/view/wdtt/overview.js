@@ -178,6 +178,7 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load('wdtt'),
+			uci.load('network'),
 			callStatus().catch(function() {
 				return { running: false, state: 'stopped' };
 			})
@@ -242,6 +243,21 @@ return view.extend({
 		o.value('selective', _('Выборочный (правила)'));
 		o.value('full', _('Полный туннель'));
 		o.default = 'selective';
+
+		o = s.option(form.ListValue, 'uplink_iface', _('Интернет (uplink)'),
+			_('Через какой WAN идут VK/TURN и перезапуск туннеля при ifup. Авто — первый default route.'));
+		o.value('auto', _('Авто (default route)'));
+		o.value('wan', 'WAN');
+		o.value('wwan', 'WWAN (LTE)');
+		uci.sections('network', 'interface', function(n) {
+			var name = n['.name'];
+			if (!name || name === 'loopback' || name === 'lan' || name === 'wdtt')
+				return;
+			if (name === 'wan' || name === 'wwan')
+				return;
+			o.value(name, name);
+		});
+		o.default = 'auto';
 
 		o = s.option(form.DynamicList, 'routing_excluded_ip', _('Исключить IP'),
 			_('Устройства, которые всегда идут напрямую (приоритет выше правил).'));
@@ -323,9 +339,18 @@ return view.extend({
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Статус'));
 
 		s.render = L.bind(function() {
+			var uplink = uci.get('wdtt', 'globals', 'uplink_iface') || 'auto';
 			return E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('Текущее состояние')),
 				E('div', { 'id': 'wdtt-status-panel' }, self.renderStatus(status)),
+				E('h4', { 'style': 'margin-top:16px' }, _('Интернет (uplink)')),
+				E('p', { 'class': 'hint' },
+					_('Через какой WAN идут VK/TURN. После смены — переподключение туннеля.')),
+				E('div', { 'class': 'cbi-page-actions', 'id': 'wdtt-uplink-buttons' }, [
+					self.uplinkButton(_('Авто'), 'auto', uplink),
+					self.uplinkButton('WAN', 'wan', uplink),
+					self.uplinkButton('WWAN', 'wwan', uplink)
+				]),
 				E('div', { 'class': 'cbi-page-actions' }, [
 					E('button', {
 						'class': 'btn cbi-button cbi-button-action',
@@ -474,6 +499,11 @@ return view.extend({
 
 		lines.push(_('Режим:') + ' «' + modeLabel + '»   ' +
 			_('Состояние:') + ' ' + (info.state_file || '-'));
+		if (info.uplink_iface || info.uplink_device) {
+			lines.push(_('Uplink:') + ' ' + (info.uplink_iface || 'auto') +
+				' → ' + (info.uplink_device || '?') +
+				(info.uplink_gateway ? ' via ' + info.uplink_gateway : ''));
+		}
 		if (mode === 'full') {
 			lines.push(_('Полный туннель — правила доменов не используются.'));
 			if (info.state_file === 'selective' || info.state_file === 'stale-selective')
@@ -614,6 +644,54 @@ return view.extend({
 		if (el) {
 			el.checked = (value === '1');
 		}
+	},
+
+	uplinkButton: function(label, iface, current) {
+		var cls = 'btn cbi-button';
+		if (current === iface)
+			cls += ' cbi-button-positive';
+		return E('button', {
+			'class': cls,
+			'click': ui.createHandlerFn(this, function() {
+				return this.handleSetUplink(iface);
+			})
+		}, label);
+	},
+
+	syncUplinkButtons: function(iface) {
+		var box = document.getElementById('wdtt-uplink-buttons');
+		if (!box)
+			return;
+		var buttons = box.querySelectorAll('button');
+		for (var i = 0; i < buttons.length; i++) {
+			var b = buttons[i];
+			var active = (iface === 'auto' && b.textContent.indexOf('Авто') >= 0)
+				|| (iface === 'wan' && b.textContent === 'WAN')
+				|| (iface === 'wwan' && b.textContent === 'WWAN');
+			b.className = 'btn cbi-button' + (active ? ' cbi-button-positive' : '');
+		}
+		var sel = document.querySelector('[data-widget-id="wdtt.globals.uplink_iface"] select')
+			|| document.querySelector('select[name="cbid.wdtt.globals.uplink_iface"]');
+		if (sel)
+			sel.value = iface;
+	},
+
+	handleSetUplink: function(iface) {
+		var self = this;
+		uci.set('wdtt', 'globals', 'uplink_iface', iface);
+		return uci.save().then(function() {
+			return callApplyConfig();
+		}).then(function(res) {
+			if (res && res.error)
+				throw new Error(res.error);
+			self.syncUplinkButtons(iface);
+			ui.addTimeLimitedNotification(null, E('p', {},
+				_('Uplink:') + ' ' + iface + '. ' + _('Переподключите туннель, если уже подключён.')), 4000, 'success');
+			self._lastRulesText = '';
+			return Promise.all([ self.pollStatus(), self.refreshRulesLog() ]);
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
 	},
 
 	handleConnect: function() {

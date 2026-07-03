@@ -1,0 +1,77 @@
+#!/bin/sh
+# Resolve WDTT uplink (VK/TURN bypass + hotplug) from UCI wdtt.globals.uplink_iface
+
+wdtt_uplink_setting() {
+	local v
+	v="$(uci -q get wdtt.globals.uplink_iface 2>/dev/null)"
+	v="${v:-auto}"
+	printf '%s' "$v"
+}
+
+wdtt_uplink_device() {
+	local uplink="$1" dev
+
+	[ -n "$uplink" ] || uplink="$(wdtt_uplink_setting)"
+	case "$uplink" in
+		auto|"")
+			ip route show default 2>/dev/null | awk 'NR==1 && /default/ {print $5; exit}'
+			return 0
+			;;
+	esac
+
+	dev="$(uci -q get "network.${uplink}.ifname" 2>/dev/null)"
+	[ -n "$dev" ] || dev="$(uci -q get "network.${uplink}.device" 2>/dev/null)"
+	[ -n "$dev" ] && printf '%s' "$dev" && return 0
+	printf '%s' "$uplink"
+}
+
+wdtt_uplink_gateway() {
+	local uplink="$1" dev gw
+
+	[ -n "$uplink" ] || uplink="$(wdtt_uplink_setting)"
+	dev="$(wdtt_uplink_device "$uplink")"
+	[ -n "$dev" ] || return 1
+
+	gw="$(ip route show default dev "$dev" 2>/dev/null | awk '/via/ {print $3; exit}')"
+	[ -n "$gw" ] && printf '%s' "$gw" && return 0
+
+	gw="$(ip route show default 2>/dev/null | awk -v d="$dev" '$0 ~ (" dev " d " ") {if ($0 ~ / via /) {print $3; exit}}')"
+	[ -n "$gw" ] && printf '%s' "$gw" && return 0
+
+	ip route show default 2>/dev/null | awk '/via/ {print $3; exit}'
+}
+
+wdtt_uplink_ifname_match() {
+	local uplink="$1" iface="$2" device="$3"
+
+	[ -n "$uplink" ] || uplink="$(wdtt_uplink_setting)"
+	case "$uplink" in
+		auto|"")
+			case "$iface" in wan|wwan) return 0 ;; esac
+			return 1
+			;;
+	esac
+	[ "$iface" = "$uplink" ] && return 0
+	[ -n "$device" ] && [ "$device" = "$(wdtt_uplink_device "$uplink")" ] && return 0
+	return 1
+}
+
+cmd="${1:-status}"
+case "$cmd" in
+	setting) wdtt_uplink_setting ;;
+	device) wdtt_uplink_device "$2" ;;
+	gateway) wdtt_uplink_gateway "$2" ;;
+	match)
+		wdtt_uplink_ifname_match "$(wdtt_uplink_setting)" "$2" "$3" && exit 0
+		exit 1
+		;;
+	status)
+		echo "uplink_iface=$(wdtt_uplink_setting)"
+		echo "uplink_dev=$(wdtt_uplink_device)"
+		echo "uplink_gw=$(wdtt_uplink_gateway)"
+		;;
+	*)
+		echo "Usage: $0 {setting|device|gateway|match|status} [args]" >&2
+		exit 1
+		;;
+esac
