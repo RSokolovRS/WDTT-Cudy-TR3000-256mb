@@ -13,7 +13,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="/tmp/wdtt-pc-install"
 VERSION="3.8.3"
 REPO="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb"
-PIN="bbf03b3"
+PIN="3c3a91b"
 
 mkdir -p "$TMP"
 
