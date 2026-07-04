@@ -7,7 +7,9 @@ normalize_domain() {
 	d="${d#http://}"
 	d="${d%%/*}"
 	d="${d%/}"
-	printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
+	# ВАЖНО: диапазоны A-Z/a-z, а не [:upper:]/[:lower:] — на некоторых busybox
+	# классы в tr трактуются буквально и калечат домен (youtube→yoltlbe и т.п.).
+	printf '%s' "$d" | tr 'A-Z' 'a-z'
 }
 
 is_ghost_domain() {

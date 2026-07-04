@@ -14,7 +14,7 @@ if ! type normalize_domain_list_text >/dev/null 2>&1; then
 	normalize_domain() {
 		local d="$1"
 		d="${d#https://}"; d="${d#http://}"; d="${d%%/*}"; d="${d%/}"
-		printf '%s' "$d" | tr '[:upper:]' '[:lower:]'
+		printf '%s' "$d" | tr 'A-Z' 'a-z'
 	}
 	is_ghost_domain() {
 		case "$1" in
@@ -35,7 +35,7 @@ if ! type normalize_domain_list_text >/dev/null 2>&1; then
 	}
 	normalize_domain_list_text() {
 		local text="$1" d out=""
-		text="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')"
+		text="$(printf '%s' "$text" | tr 'A-Z' 'a-z')"
 		text="$(defragment_domain_list_text "$text")"
 		text="$(printf '%s' "$text" | tr ',;\n\r\t' ' ')"
 		for d in $text; do
