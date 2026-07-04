@@ -1,4 +1,5 @@
 'use strict';
+/* WDTT overview.js — domain-save fix v3.8.5 */
 'require view';
 'require ui';
 'require dom';
@@ -50,6 +51,75 @@ var callRoutingInfo = rpc.declare({
 	method: 'routing_info'
 });
 
+function annotateDomainFields() {
+	document.querySelectorAll('textarea').forEach(function(ta) {
+		var blob = (ta.name || '') + ' ' + (ta.id || '');
+		if (/captcha|hashes/i.test(blob))
+			return;
+		var m = /wdtt\.([^.]+)\.domain_list/.exec(blob);
+		if (!m) {
+			var wrap = ta.closest('[id*="domain_list"]');
+			if (wrap)
+				m = /wdtt\.([^.]+)\.domain_list/.exec(wrap.id || '');
+		}
+		if (m)
+			ta.setAttribute('data-wdtt-domain-list', m[1]);
+	});
+}
+
+function readDomainRulesFromPage() {
+	var rules = {};
+
+	function ensure(sid) {
+		if (!sid)
+			return null;
+		if (!rules[sid])
+			rules[sid] = { enabled: '1', domain_list: '' };
+		return rules[sid];
+	}
+
+	annotateDomainFields();
+
+	document.querySelectorAll('textarea[data-wdtt-domain-list]').forEach(function(ta) {
+		var sid = ta.getAttribute('data-wdtt-domain-list');
+		var normalized = normalizeDomainList(ta.value);
+		if (normalized)
+			ensure(sid).domain_list = normalized;
+	});
+
+	document.querySelectorAll('textarea').forEach(function(ta) {
+		var blob = (ta.name || '') + ' ' + (ta.id || '');
+		if (/captcha|hashes/i.test(blob))
+			return;
+		var m = /wdtt\.([^.]+)\.domain_list/.exec(blob);
+		if (!m) {
+			var wrap = ta.closest('[id*="domain_list"]');
+			if (wrap)
+				m = /wdtt\.([^.]+)\.domain_list/.exec(wrap.id || '');
+		}
+		if (!m)
+			return;
+		var normalized = normalizeDomainList(ta.value);
+		if (normalized)
+			ensure(m[1]).domain_list = normalized;
+	});
+
+	document.querySelectorAll('input[type="checkbox"]').forEach(function(el) {
+		var blob = (el.name || '') + ' ' + (el.id || '');
+		var m = /wdtt\.([^.]+)\.enabled/.exec(blob);
+		if (m)
+			ensure(m[1]).enabled = el.checked ? '1' : '0';
+	});
+
+	uci.sections('wdtt', 'rule', function(s) {
+		var sid = s['.name'];
+		if (sid)
+			ensure(sid);
+	});
+
+	return rules;
+}
+
 function syncRuleFieldsFromDom() {
 	function syncSid(sid, enabled, domains) {
 		if (!sid)
@@ -60,14 +130,12 @@ function syncRuleFieldsFromDom() {
 			var normalized = normalizeDomainList(domains);
 			if (normalized)
 				uci.set('wdtt', sid, 'domain_list', normalized);
-			else
-				uci.unset('wdtt', sid, 'domain_list');
 		}
 	}
 
 	document.querySelectorAll('.cbi-section-node[data-section-id]').forEach(function(node) {
 		var sid = node.getAttribute('data-section-id');
-		var ta = node.querySelector('textarea');
+		var ta = node.querySelector('textarea[name*="domain_list"], textarea[id*="domain_list"]');
 		var en = node.querySelector('input[type="checkbox"][name*=".enabled"], input[type="checkbox"][id*=".enabled"]');
 		syncSid(
 			sid,
@@ -99,19 +167,48 @@ function syncRuleFieldsFromDom() {
 function collectRulesFromDom() {
 	var rules = {};
 
-	document.querySelectorAll('.cbi-section-node[data-section-id]').forEach(function(node) {
-		var sid = node.getAttribute('data-section-id');
-		var ta = node.querySelector('textarea');
-		var en = node.querySelector('input[type="checkbox"][name*=".enabled"], input[type="checkbox"][id*=".enabled"]');
+	function addRule(sid, enabled, domains) {
 		if (!sid)
 			return;
 		rules[sid] = {
-			enabled: en ? (en.checked ? '1' : '0') : '1',
-			domain_list: ta ? normalizeDomainList(ta.value) : ''
+			enabled: (enabled != null ? (enabled ? '1' : '0') : (rules[sid] && rules[sid].enabled) || '1'),
+			domain_list: domains != null ? normalizeDomainList(domains) : ((rules[sid] && rules[sid].domain_list) || '')
 		};
+	}
+
+	document.querySelectorAll('textarea[name*="domain_list"]').forEach(function(ta) {
+		var m = /cbid\.wdtt\.([^.]+)\.domain_list/.exec(ta.name || '');
+		if (m)
+			addRule(m[1], null, ta.value);
+	});
+
+	document.querySelectorAll('[id^="widget.cbid.wdtt."][id$=".domain_list"]').forEach(function(widget) {
+		var m = /^widget\.cbid\.wdtt\.(.+)\.domain_list$/.exec(widget.id);
+		var ta = widget.querySelector('textarea') || (widget.tagName === 'TEXTAREA' ? widget : null);
+		if (m && ta)
+			addRule(m[1], null, ta.value);
+	});
+
+	document.querySelectorAll('.cbi-section-node[data-section-id]').forEach(function(node) {
+		var sid = node.getAttribute('data-section-id');
+		var ta = node.querySelector('textarea[name*="domain_list"], textarea[id*="domain_list"]');
+		var en = node.querySelector('input[type="checkbox"][name*=".enabled"], input[type="checkbox"][id*=".enabled"]');
+		if (!sid)
+			return;
+		addRule(sid, en ? en.checked : null, ta ? ta.value : null);
+	});
+
+	document.querySelectorAll('input[type="checkbox"][name$=".enabled"]').forEach(function(el) {
+		var m = /cbid\.wdtt\.([^.]+)\.enabled/.exec(el.name || '');
+		if (m)
+			addRule(m[1], el.checked, null);
 	});
 
 	return rules;
+}
+
+function collectRulesPayload() {
+	return readDomainRulesFromPage();
 }
 
 function normalizeRulesArray(rules) {
@@ -245,7 +342,7 @@ return view.extend({
 		o.default = 'selective';
 
 		o = s.option(form.ListValue, 'uplink_iface', _('Интернет (uplink)'),
-			_('Через какой WAN идут VK/TURN и перезапуск туннеля при ifup. Авто — первый default route.'));
+			_('Физический канал: VK/TURN и пакеты к VPS (peer). В режиме «Полный» выход в интернет — через туннель на VPS, не напрямую в LTE/WAN.'));
 		o.value('auto', _('Авто (default route)'));
 		o.value('wan', 'WAN');
 		o.value('wwan', 'WWAN (LTE)');
@@ -299,8 +396,6 @@ return view.extend({
 			var normalized = normalizeDomainList(formvalue);
 			if (normalized)
 				uci.set('wdtt', section_id, 'domain_list', normalized);
-			else
-				uci.unset('wdtt', section_id, 'domain_list');
 		};
 		o.remove = function(section_id) {
 			uci.unset('wdtt', section_id, 'domain_list');
@@ -345,7 +440,7 @@ return view.extend({
 				E('div', { 'id': 'wdtt-status-panel' }, self.renderStatus(status)),
 				E('h4', { 'style': 'margin-top:16px' }, _('Интернет (uplink)')),
 				E('p', { 'class': 'hint' },
-					_('Через какой WAN идут VK/TURN. После смены — переподключение туннеля.')),
+					_('Физический канал к VPS и VK. После смены — переподключение. В «Полном» режиме сайты выходят через VPS.')),
 				E('div', { 'class': 'cbi-page-actions', 'id': 'wdtt-uplink-buttons' }, [
 					self.uplinkButton(_('Авто'), 'auto', uplink),
 					self.uplinkButton('WAN', 'wan', uplink),
@@ -401,8 +496,23 @@ return view.extend({
 
 		var mapSave = m.save.bind(m);
 		m.save = function() {
-			return mapSave().then(function() {
-				return callApplyConfig().catch(function() { return {}; });
+			var rulesPayload = readDomainRulesFromPage();
+			var applyRulesP = Promise.resolve({});
+			var mode = uci.get('wdtt', 'globals', 'routing_mode') || 'selective';
+			if (mode !== 'full' && Object.keys(rulesPayload).some(function(sid) {
+				return rulesPayload[sid].domain_list;
+			}))
+				applyRulesP = callApplyRules(rulesPayload).catch(function() { return {}; });
+
+			syncRuleFieldsFromDom();
+			return applyRulesP.then(function() {
+				return mapSave();
+			}).then(function() {
+				return callApplyConfig().then(function() {
+					if (mode !== 'full')
+						return callApplyRules(rulesPayload).catch(function() { return {}; });
+					return {};
+				}).catch(function() { return {}; });
 			});
 		};
 
@@ -727,15 +837,24 @@ return view.extend({
 		var map = self.wdttMap;
 		if (!map)
 			return Promise.resolve();
-		var rulesPayload = collectRulesFromDom();
-		return map.parse().then(function() {
-			syncRuleFieldsFromDom();
-			return uci.save();
-		}).then(function() {
-			return callApplyRules(rulesPayload);
-		}).then(function(res) {
+		var rulesPayload = readDomainRulesFromPage();
+		var hasDomains = Object.keys(rulesPayload).some(function(sid) {
+			return rulesPayload[sid].domain_list;
+		});
+		if (!hasDomains)
+			return Promise.reject(new Error(_('В поле «Домены» введите сайты (например youtube.com) и нажмите снова.')));
+
+		return callApplyRules(rulesPayload).then(function(res) {
 			if (res && res.error)
 				throw new Error(res.error);
+			return map.parse(true).then(function() {
+				syncRuleFieldsFromDom();
+				return uci.save();
+			}).catch(function() {
+				syncRuleFieldsFromDom();
+				return uci.save().catch(function() { return null; });
+			});
+		}).then(function() {
 			ui.addTimeLimitedNotification(null, E('p', {}, _('Правила применены')), 3000, 'success');
 			self._lastRulesText = '';
 			return self.refreshRulesLog();

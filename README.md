@@ -70,7 +70,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.8.3+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.8.9+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 
@@ -86,7 +86,24 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 LuCI **Подключить / Отключить** (v3.6.7+) — через ubus, без зависания на Save.
 
-После установки: LuCI → **WDTT VPN** → peer/password/hashes → **VKCalls** (по умолчанию) → **Правила** → добавьте домены → Включено → Подключить.
+### Домены не сохраняются / склеиваются / wdtt.conf пуст (v3.8.9)
+
+Обновление с ПК (без полной переустановки):
+
+```bash
+sh scripts/push-domain-fix.sh root@192.168.10.1
+```
+
+В браузере **Ctrl+F5** → LuCI → Правила → **Принять изменения**.
+
+Ручная запись:
+
+```bash
+/usr/libexec/wdtt/set-domains route1 youtube.com,googlevideo.com
+/usr/libexec/wdtt/doctor
+```
+
+После установки: LuCI → **WDTT VPN** → peer/password/hashes → **VKCalls** → **Правила** → домены → **Принять изменения** → Подключить.
 
 Routing поднимается **авоматически** при `connected`. Проверка:
 

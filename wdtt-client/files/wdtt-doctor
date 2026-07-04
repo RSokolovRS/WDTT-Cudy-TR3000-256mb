@@ -150,7 +150,12 @@ else
 	if grep -qE 'nftset=/(2iw\.|yoltlbe\.com|2iw\.rl)/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
 		echo "FAIL: wdtt.conf содержит ghost-домены"
 	elif grep -q '^nftset=' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
-		echo "OK: wdtt.conf домены выглядят нормально"
+		if grep -qE 'nftset=/[^/]*\.com[a-z0-9][^/]*/' /tmp/dnsmasq.d/wdtt.conf 2>/dev/null; then
+			echo "FAIL: wdtt.conf — склеенные домены (.com без запятой). Запустите:"
+			echo "      /usr/libexec/wdtt/set-domains route1 youtube.com,googlevideo.com"
+		else
+			echo "OK: wdtt.conf домены выглядят нормально"
+		fi
 	else
 		echo "WARN: wdtt.conf пуст — «Принять изменения» в LuCI или routing reload"
 	fi

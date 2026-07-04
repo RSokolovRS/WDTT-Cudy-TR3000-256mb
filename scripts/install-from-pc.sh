@@ -1,8 +1,8 @@
 #!/bin/sh
 # Установка WDTT с компьютера (jsDelivr/GitHub недоступны с роутера)
 # Запуск на ПК:
-#   sh scripts/install-from-pc.sh root@192.168.1.1
-#   sh scripts/install-from-pc.sh root@192.168.1.1 --clean
+#   sh scripts/install-from-pc.sh root@192.168.10.1
+#   sh scripts/install-from-pc.sh root@192.168.10.1 --clean
 
 set -e
 
@@ -11,9 +11,50 @@ CLEAN_ARG=""
 [ "$2" = "--clean" ] && CLEAN_ARG="--clean"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="/tmp/wdtt-pc-install"
-VERSION="3.8.3"
+VERSION="3.8.9"
 REPO="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb"
 PIN="3c3a91b"
+MIN_BIN_SIZE=1048576
+
+wdtt_local_bin_ok() {
+	local f="$1" sz
+	[ -f "$f" ] || return 1
+	sz="$(wc -c < "$f" | tr -d ' ')"
+	[ "$sz" -ge "$MIN_BIN_SIZE" ] || return 1
+	head -c 4 "$f" | grep -q 'ELF' && return 0
+	head -c 4 "$f" | od -An -tx1 2>/dev/null | grep -q '7f 45 4c 46'
+}
+
+wdtt_ssh_put() {
+	local src="$1" dest="$2"
+	scp -O "$src" "$ROUTER:$dest" 2>/dev/null && return 0
+	scp "$src" "$ROUTER:$dest" 2>/dev/null && return 0
+	echo "  scp failed, fallback: ssh cat → $dest"
+	ssh "$ROUTER" "cat > $dest" < "$src"
+}
+
+wdtt_ssh_put_bin() {
+	local src="$1" dest="$2" sz_pc sz_rt
+
+	sz_pc="$(wc -c < "$src" | tr -d ' ')"
+	echo "  push binary ($sz_pc bytes) → $dest"
+
+	scp -O "$src" "$ROUTER:$dest" 2>/dev/null && :
+	scp "$src" "$ROUTER:$dest" 2>/dev/null && :
+	if ssh "$ROUTER" "wc -c < $dest 2>/dev/null" | tr -d ' ' | grep -qx "$sz_pc"; then
+		ssh "$ROUTER" "chmod 755 $dest"
+		return 0
+	fi
+
+	echo "  scp size mismatch, trying gzip stream..."
+	gzip -c "$src" | ssh "$ROUTER" "gunzip -c > $dest && chmod 755 $dest"
+
+	sz_rt="$(ssh "$ROUTER" "wc -c < $dest 2>/dev/null" | tr -d ' ')"
+	if [ "$sz_pc" != "$sz_rt" ]; then
+		echo "ERROR: binary size mismatch PC=$sz_pc router=$sz_rt" >&2
+		return 1
+	fi
+}
 
 mkdir -p "$TMP"
 
@@ -30,6 +71,10 @@ else
 		"https://raw.githubusercontent.com/RSokolovRS/WDTT-Cudy-TR3000-256mb/${PIN}/bin/wdttd-linux-arm64"
 fi
 chmod +x "$TMP/wdttd"
+wdtt_local_bin_ok "$TMP/wdttd" || {
+	echo "ERROR: invalid wdttd binary on PC" >&2
+	exit 1
+}
 ls -la "$TMP/wdttd"
 
 echo "=== Bundle repo files (offline) ==="
@@ -41,6 +86,8 @@ tar czf "$TMP/wdtt-repo.tar.gz" -C "$DIR" \
 	wdtt-client/files/wdtt-doctor \
 	wdtt-client/files/wdtt-full-tunnel \
 	wdtt-client/files/wdtt-uplink \
+	wdtt-client/files/wdtt-domain-lib.sh \
+	wdtt-client/files/wdtt-set-domains \
 	luci-app-wdtt/root/etc/init.d/wdtt \
 	luci-app-wdtt/root/etc/config/wdtt \
 	luci-app-wdtt/root/etc/firewall.wdtt \
@@ -52,17 +99,21 @@ tar czf "$TMP/wdtt-repo.tar.gz" -C "$DIR" \
 	luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js
 
 echo "=== Copy to router $ROUTER ==="
-scp "$TMP/wdttd" "$ROUTER:/tmp/wdttd"
-scp "$TMP/wdtt-repo.tar.gz" "$ROUTER:/tmp/wdtt-repo.tar.gz"
-scp "$DIR/install.sh" "$ROUTER:/tmp/wdtt-install.sh"
+wdtt_ssh_put_bin "$TMP/wdttd" "/tmp/wdttd"
+wdtt_ssh_put "$TMP/wdtt-repo.tar.gz" "/tmp/wdtt-repo.tar.gz"
+wdtt_ssh_put "$DIR/install.sh" "/tmp/wdtt-install.sh"
+
+echo "=== Verify on router ==="
+ssh "$ROUTER" "ls -la /tmp/wdttd; wc -c < /tmp/wdttd; head -c 4 /tmp/wdttd | grep -aq ELF && echo ELF_OK || echo ELF_CHECK_SKIP"
 
 echo "=== Run offline installer on router ==="
 ssh "$ROUTER" "set -e
-	rm -rf /tmp/wdtt-repo
+	rm -rf /tmp/wdtt-repo /tmp/wdtt-install
 	mkdir -p /tmp/wdtt-repo
 	tar xzf /tmp/wdtt-repo.tar.gz -C /tmp/wdtt-repo
 	chmod +x /tmp/wdttd /tmp/wdtt-install.sh
 	WDTT_SKIP_PROBE=1 \
+	WDTT_SKIP_DEPS=1 \
 	WDTT_LOCAL_BIN=/tmp/wdttd \
 	WDTT_LOCAL_REPO=/tmp/wdtt-repo \
 	WDTT_KEEP_SECRETS=1 \

@@ -233,9 +233,12 @@ wdtt_merge_rules_json() {
 		[ -n "$enabled" ] && uci -q set "wdtt.${section}.enabled=${enabled}"
 		if [ -n "$domain_list" ]; then
 			domain_list="$(printf '%s' "$domain_list" | tr ',;\n\r\t' ',,,,' | sed 's/,,*/,/g;s/^,//;s/,$//')"
-			uci -q set "wdtt.${section}.domain_list=${domain_list}"
-		else
-			uci -q delete "wdtt.${section}.domain_list" 2>/dev/null
+			while uci -q delete "wdtt.${section}.domain_list[0]" 2>/dev/null; do :; done
+			while uci -q delete "wdtt.${section}.domain[0]" 2>/dev/null; do :; done
+			uci -q batch <<-EOB
+				set wdtt.${section}.domain_list='${domain_list}'
+			EOB
+			logger -t wdtt "apply_rules: ${section} domain_list=${domain_list}"
 		fi
 	done
 	json_select ..

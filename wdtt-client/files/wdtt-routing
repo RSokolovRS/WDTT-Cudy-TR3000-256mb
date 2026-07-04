@@ -1,9 +1,10 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.7.4
+# WDTT_ROUTING_VERSION=3.8.9
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
+[ -f /usr/libexec/wdtt/domain-lib.sh ] && . /usr/libexec/wdtt/domain-lib.sh
 
 MARK=0x777474
 TABLE=100
@@ -89,16 +90,31 @@ normalize_domain() {
 
 is_ghost_domain() {
 	case "$1" in
-	*2iw*|*yoltlbe*) return 0 ;;
+	2iw.*|*.2iw.*|*2iw.rl|*2iw.io) return 0 ;;
+	yoltlbe.com|*.yoltlbe.com|yoltlbe) return 0 ;;
 	esac
 	return 1
 }
 
+# busybox-safe: разбор строки только через parameter expansion.
+# Никаких for..in / многосимвольного tr / зависимости от IFS.
 foreach_domain_text() {
-	local text="$1" callback="$2" d
-	text="$(printf '%s' "$text" | tr ',;\n\r\t' ' ')"
-	for d in $text; do
-		d="$(normalize_domain "$d")"
+	local text="$1" callback="$2" work item d
+
+	# все разделители → запятая (по одному символу)
+	work="$(printf '%s' "$text" | tr ';' ',')"
+	work="$(printf '%s' "$work" | tr ' ' ',')"
+	work="$(printf '%s' "$work" | tr '\t' ',')"
+	work="$(printf '%s' "$work" | tr '\n' ',')"
+	work="$(printf '%s' "$work" | tr '\r' ',')"
+
+	while [ -n "$work" ]; do
+		case "$work" in
+		*,*) item="${work%%,*}"; work="${work#*,}" ;;
+		*)   item="$work"; work="" ;;
+		esac
+		[ -n "$item" ] || continue
+		d="$(normalize_domain "$item")"
 		[ -n "$d" ] || continue
 		is_ghost_domain "$d" && continue
 		case "$d" in
@@ -108,7 +124,12 @@ foreach_domain_text() {
 }
 
 append_domains_from_text() {
-	local text="$1"
+	local text="$1" norm
+	# normalize — best-effort; если вернула пусто (busybox-квирк), берём raw.
+	if type normalize_domain_list_text >/dev/null 2>&1; then
+		norm="$(normalize_domain_list_text "$text")"
+		[ -n "$norm" ] && text="$norm"
+	fi
 	foreach_domain_text "$text" append_domain_nftset
 }
 
@@ -124,12 +145,17 @@ append_domain_nftset() {
 	domain="$(normalize_domain "$domain")"
 	case "$domain" in
 	*" "*|*/*/*|list\ domain*|option\ domain*) return 0 ;;
-	*2iw.*|*yoltlbe*) log "WARN: skip ghost domain: ${domain}"; return 0 ;;
+	2iw.*|*.2iw.*|*2iw.rl|*2iw.io|yoltlbe.com|*.yoltlbe.com|yoltlbe)
+		log "WARN: skip ghost domain: ${domain}"; return 0 ;;
 	esac
 	case "$domain" in
 	*.*) ;;
 	*) log "WARN: skip invalid domain: ${domain}"; return 0 ;;
 	esac
+	if type is_glued_domain >/dev/null 2>&1 && is_glued_domain "$domain"; then
+		log "WARN: skip glued domain blob: ${domain}"
+		return 0
+	fi
 	[ -n "$domain" ] || return 0
 	grep -qF "nftset=/${domain}/" "$DNSMASQ_SNIPPET" 2>/dev/null && return 0
 	echo "nftset=/${domain}/${NFTSET_SUFFIX}${NFT_SET_ROUTE}" >> "$DNSMASQ_SNIPPET"
@@ -327,6 +353,10 @@ sync_wdtt_domains_uci() {
 build_dnsmasq() {
 	local line section="" type="route" enabled="1" in_rule=0 val n=0
 
+	if type wdtt_sanitize_all_rule_domain_lists >/dev/null 2>&1; then
+		wdtt_sanitize_all_rule_domain_lists
+	fi
+
 	mkdir -p "$(dirname "$DNSMASQ_SNIPPET")"
 	: > "$DNSMASQ_SNIPPET"
 
@@ -376,17 +406,31 @@ build_dnsmasq() {
 				[ "$type" = "route" ] || continue
 				[ "$enabled" = "0" ] && continue
 				val="$(uci_line_value "$line")"
+				log "rule ${section}: raw domain_list='${val}'"
+				# append_domains_from_text сам нормализует и имеет фоллбэк на raw
 				append_domains_from_text "$val"
 				;;
 			list\ domain|list\ domain\ *|list\ domains|list\ domains\ *)
 				[ "$type" = "route" ] || continue
 				[ "$enabled" = "0" ] && continue
 				val="$(parse_list_domain_line "$line")" || continue
-				append_domain_nftset "$val"
+				if type normalize_domain_list_text >/dev/null 2>&1; then
+					val="$(normalize_domain_list_text "$val")"
+				fi
+				append_domains_from_text "$val"
 				;;
 			option\ domain|option\ domains*)
 				log "WARN: ignoring legacy option domain (use domain_list in LuCI)"
 				continue
+				;;
+			list\ domain_list|list\ domain_list\ *)
+				[ "$type" = "route" ] || continue
+				[ "$enabled" = "0" ] && continue
+				val="$(uci_line_value "$line")"
+				if type normalize_domain_list_text >/dev/null 2>&1; then
+					val="$(normalize_domain_list_text "$val")"
+				fi
+				append_domains_from_text "$val"
 				;;
 			option\ list_url\ *)
 				[ "$type" = "route" ] || continue
@@ -398,11 +442,38 @@ build_dnsmasq() {
 	done < /etc/config/wdtt
 
 	n=$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null) || n=0
+
+	# Фоллбэк: файл-парсер дал 0, но UCI знает домены (list/option — неважно).
+	if [ "$n" -eq 0 ] && uci_wdtt_parse_ok; then
+		build_dnsmasq_from_uci
+		n=$(grep -c '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null) || n=0
+		[ "$n" -gt 0 ] && log "dnsmasq: домены прочитаны через UCI (fallback)"
+	fi
+
 	log "dnsmasq: ${n} nftset domain(s) in $DNSMASQ_SNIPPET"
 	if [ "$n" -eq 0 ]; then
 		log "WARN: no domains in wdtt.conf"
 	fi
 	return 0
+}
+
+# Чтение доменов напрямую из UCI (устойчиво к формату list/option в файле).
+build_dnsmasq_from_uci() {
+	local sec t en dl url
+	[ -x /sbin/uci ] || return 0
+
+	for sec in $(uci -q show wdtt 2>/dev/null | sed -n 's/^wdtt\.\([^.=]*\)=rule$/\1/p'); do
+		t="$(uci -q get "wdtt.${sec}.type" 2>/dev/null)"; t="${t:-route}"
+		en="$(uci -q get "wdtt.${sec}.enabled" 2>/dev/null)"; en="${en:-1}"
+		[ "$t" = "route" ] || continue
+		[ "$en" = "0" ] && continue
+
+		dl="$(uci -q get "wdtt.${sec}.domain_list" 2>/dev/null)"
+		[ -n "$dl" ] && append_domains_from_text "$dl"
+
+		url="$(uci -q get "wdtt.${sec}.list_url" 2>/dev/null)"
+		[ -n "$url" ] && append_url_domains_raw "$url"
+	done
 }
 
 nft_add_one() {
@@ -545,7 +616,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.7.3"
+	log "starting selective routing (nft) on $IFACE v3.8.9"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 

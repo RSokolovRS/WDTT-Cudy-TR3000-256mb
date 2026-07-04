@@ -172,10 +172,12 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				mode = wg.ModeSelective
 			}
 			uplink := ""
+			peer := ""
 			if d.cfg != nil {
 				uplink = d.cfg.UplinkIface
+				peer = d.cfg.Peer
 			}
-			if err := d.wg.ApplyWithMode(ev.Data, d.turnIPs(), mode, uplink); err != nil {
+			if err := d.wg.ApplyWithMode(ev.Data, d.turnIPs(), mode, uplink, peer); err != nil {
 				log.Printf("[WDTT] WireGuard apply failed: %v", err)
 				d.status.SetError(err)
 			} else {

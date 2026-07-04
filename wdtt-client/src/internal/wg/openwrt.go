@@ -69,10 +69,10 @@ func (m *Manager) Apply(conf string, turnIPs []string) error {
 	m.mu.Lock()
 	mode := m.mode
 	m.mu.Unlock()
-	return m.ApplyWithMode(conf, turnIPs, mode, "")
+	return m.ApplyWithMode(conf, turnIPs, mode, "", "")
 }
 
-func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode, uplinkIface string) error {
+func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode, uplinkIface, peerAddr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mode = mode
@@ -134,6 +134,12 @@ func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode,
 	}
 	for _, dns := range localDNSServers() {
 		cidr := dns + "/32"
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
+		}
+	}
+	if peerHost := parsePeerHost(peerAddr); peerHost != "" {
+		cidr := peerHost + "/32"
 		if addBypassRoute(cidr, gw, uplinkDev) {
 			routes = append(routes, cidr)
 		}
@@ -321,6 +327,24 @@ func gatewayOnDevice(dev string) string {
 		}
 	}
 	return ""
+}
+
+func parsePeerHost(peerAddr string) string {
+	peerAddr = strings.TrimSpace(peerAddr)
+	if peerAddr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(peerAddr)
+	if err != nil {
+		if net.ParseIP(peerAddr) != nil {
+			return peerAddr
+		}
+		return ""
+	}
+	if net.ParseIP(host) == nil {
+		return ""
+	}
+	return host
 }
 
 func localDNSServers() []string {

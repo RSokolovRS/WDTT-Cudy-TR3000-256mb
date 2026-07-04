@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.8.3"
-WDTT_ROUTING_VERSION="3.7.4"
+WDTT_INSTALL_VERSION="3.8.9"
+WDTT_ROUTING_VERSION="3.8.9"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -303,12 +303,24 @@ install_repo_file() {
 }
 
 bin_is_valid() {
-	local f="$1" min="${2:-1048576}"
+	local f="$1" min="${2:-1048576}" sz magic
 
 	[ -f "$f" ] || return 1
-	[ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -ge "$min" ] || return 1
-	head -c 4 "$f" 2>/dev/null | grep -q 'ELF' || return 1
-	return 0
+	sz="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+	[ -n "$sz" ] && [ "$sz" -ge "$min" ] || return 1
+	magic="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
+	case "$magic" in
+		7f454c46*) return 0 ;;
+	esac
+	head -c 4 "$f" 2>/dev/null | grep -q 'ELF' && return 0
+	return 1
+}
+
+bin_invalid_hint() {
+	local f="$1" sz magic
+	sz="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+	magic="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
+	err "  размер=${sz:-0} байт, magic=${magic:-??} (ожидается 7f454c46 / ELF arm64)"
 }
 
 try_download_bin() {
@@ -324,19 +336,26 @@ try_download_bin() {
 }
 
 install_bin() {
-	local dest="$1" goarch="${2:-arm64}" relpath url gh_url
+	local dest="$1" goarch="${2:-arm64}" relpath url gh_url local_bin
+
+	mkdir -p "$(dirname "$dest")" 2>/dev/null || true
 
 	relpath="bin/wdttd-linux-${goarch}"
 
 	# Локальный бинарник (скопирован с ПК): WDTT_LOCAL_BIN=/tmp/wdttd sh install.sh
-	if [ -n "$WDTT_LOCAL_BIN" ] && [ -f "$WDTT_LOCAL_BIN" ]; then
-		msg "  using local: $WDTT_LOCAL_BIN"
-		cp -f "$WDTT_LOCAL_BIN" "$dest"
+	for local_bin in "$WDTT_LOCAL_BIN" "$WDTT_LOCAL_REPO/bin/wdttd-linux-${goarch}"; do
+		[ -n "$local_bin" ] || continue
+		[ -f "$local_bin" ] || continue
+		msg "  using local: $local_bin"
+		cp -f "$local_bin" "$dest"
 		chmod 0755 "$dest"
-		bin_is_valid "$dest" && return 0
-		err "  WDTT_LOCAL_BIN не похож на ELF arm64"
-		return 1
-	fi
+		if bin_is_valid "$dest"; then
+			return 0
+		fi
+		bin_invalid_hint "$local_bin"
+		err "  WDTT_LOCAL_BIN не похож на ELF arm64 — перекачайте с ПК (gzip|ssh gunzip)"
+		rm -f "$dest"
+	done
 
 	# jsDelivr (файл в репо bin/) — работает когда github.com/releases заблокирован
 	for url in \
@@ -456,7 +475,7 @@ install_wdtt_helpers() {
 	local f dest ok=0
 
 	mkdir -p /usr/libexec/wdtt
-	for f in fix-config doctor full-tunnel uplink; do
+	for f in fix-config doctor full-tunnel uplink set-domains domain-lib; do
 		dest="/usr/libexec/wdtt/$f"
 		if download_file "$RAW_URL/wdtt-client/files/wdtt-$f" "$dest" 2>/dev/null \
 			|| install_repo_file "wdtt-client/files/wdtt-$f" "$dest" "$f" 2>/dev/null; then
@@ -543,6 +562,7 @@ install_from_source() {
 
 	mkdir -p /tmp/dnsmasq.d
 	msg "WDTT files installed."
+	msg "Step 4/4: зависимости (apk) — может занять 1–5 мин, подождите..."
 }
 
 	routing_is_current() {
@@ -675,6 +695,13 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.vk_auth_mode 2>/dev/null > "$f/vk_auth_mode"
 	uci -q get wdtt.globals.workers 2>/dev/null > "$f/workers"
 	uci -q get wdtt.globals.routing_mode 2>/dev/null > "$f/routing_mode"
+	uci -q get wdtt.globals.uplink_iface 2>/dev/null > "$f/uplink_iface"
+	mkdir -p "$f/rules"
+	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\\.\\([^.=]*\\)=rule\$/\\1/p"); do
+		uci -q get "wdtt.${section}.domain_list" 2>/dev/null > "$f/rules/${section}.domain_list"
+		uci -q get "wdtt.${section}.enabled" 2>/dev/null > "$f/rules/${section}.enabled"
+		uci -q get "wdtt.${section}.type" 2>/dev/null > "$f/rules/${section}.type"
+	done
 }
 
 restore_wdtt_secrets() {
@@ -683,7 +710,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes enabled captcha_mode vk_auth_mode workers routing_mode; do
+	for v in peer password hashes enabled captcha_mode vk_auth_mode workers routing_mode uplink_iface; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"
@@ -692,6 +719,21 @@ restore_wdtt_secrets() {
 		fi
 		uci -q set "wdtt.globals.${v}=${val}"
 	done
+	if [ -d "$f/rules" ]; then
+		for rf in "$f/rules"/*.domain_list; do
+			[ -f "$rf" ] || continue
+			section="$(basename "$rf" .domain_list)"
+			[ -n "$section" ] || continue
+			uci -q get "wdtt.${section}" >/dev/null 2>&1 || uci -q set "wdtt.${section}=rule"
+			uci -q set "wdtt.${section}.type=route" 2>/dev/null
+			val="$(cat "$rf")"
+			[ -n "$val" ] && uci -q set "wdtt.${section}.domain_list=${val}"
+			[ -f "$f/rules/${section}.enabled" ] && [ -s "$f/rules/${section}.enabled" ] \
+				&& uci -q set "wdtt.${section}.enabled=$(cat "$f/rules/${section}.enabled")"
+			[ -f "$f/rules/${section}.type" ] && [ -s "$f/rules/${section}.type" ] \
+				&& uci -q set "wdtt.${section}.type=$(cat "$f/rules/${section}.type")"
+		done
+	fi
 	uci -q commit wdtt 2>/dev/null
 	msg "Учётные данные WDTT восстановлены"
 }
@@ -706,14 +748,13 @@ apply_clean_routing_defaults() {
 	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/list domain.*2iw/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/list domain.*yoltlbe/d' /etc/config/wdtt 2>/dev/null
+	# Домены не трогаем при --clean (backup/restore) — только ghost list domain
 	for section in $(uci -q show wdtt 2>/dev/null | sed -n "s/^wdtt\\.\\([^.=]*\\)=rule\$/\\1/p"); do
 		while uci -q delete "wdtt.${section}.domain" 2>/dev/null; do :; done
 		uci -q delete "wdtt.${section}.domains" 2>/dev/null
-		uci -q delete "wdtt.${section}.domain_list" 2>/dev/null
-		uci -q delete "wdtt.${section}.list_url" 2>/dev/null
 	done
 	uci -q commit wdtt 2>/dev/null
-	msg "routing: vk_auth_mode=vkcalls, captcha_mode=wv, домены пустые — добавьте в LuCI → Правила"
+	msg "routing: vk_auth_mode=vkcalls, captcha_mode=wv (domain_list сохранены при --clean)"
 }
 
 uninstall_wdtt() {
@@ -1047,7 +1088,9 @@ main() {
 
 	# Зависимости через apk — только если зеркала доступны
 	fix_broken_wget
-	if apk update >/dev/null 2>&1; then
+	if [ "$WDTT_SKIP_DEPS" = "1" ]; then
+		warn "Пропуск apk (WDTT_SKIP_DEPS=1) — wireguard/dnsmasq должны быть уже установлены"
+	elif apk update >/dev/null 2>&1; then
 		install_dependencies
 	else
 		warn "apk update failed — WDTT установлен, но WireGuard нужно поставить вручную:"
