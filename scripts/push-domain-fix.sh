@@ -7,7 +7,7 @@ set -e
 
 ROUTER="${1:-root@192.168.10.1}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="3.9.3"
+VERSION="3.9.4"
 
 wdtt_scp() {
 	local src="$1" dest="$2"

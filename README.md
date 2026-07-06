@@ -4,6 +4,31 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
+### Рабочие ссылки v3.9.4 (рекомендуется — без кэша jsDelivr)
+
+| Назначение | URL |
+|------------|-----|
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh` |
+| routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-routing` |
+| domain-lib | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-domain-lib.sh` |
+| push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
+
+Установка одной командой (pin):
+
+```bash
+wget -O /tmp/wdtt-install.sh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
+sh /tmp/wdtt-install.sh
+```
+
+Альтернатива через `@main` (внутри pin на коммит для остальных файлов; jsDelivr может кэшировать 5–15 мин):
+
+```bash
+wget -O /tmp/wdtt-install.sh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+sh /tmp/wdtt-install.sh
+```
+
 ### Вариант A — wget (если HTTPS работает)
 
 Сначала проверьте, что wget не `wget-nossl`:
@@ -19,7 +44,15 @@ ln -sf /bin/uclient-fetch /usr/bin/wget
 apk del wget-nossl
 ```
 
-Установка одной командой (**install.sh с `@main`** — внутри pin на коммит для остальных файлов):
+Установка одной командой:
+
+```bash
+wget -O /tmp/wdtt-install.sh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
+sh /tmp/wdtt-install.sh
+```
+
+Или через `@main` (если pin недоступен):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
@@ -31,7 +64,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
 
@@ -39,7 +72,7 @@ sh /tmp/wdtt-install.sh --clean
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh --uninstall
 ```
 
@@ -70,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.9.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.9.4+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 
@@ -86,7 +119,22 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 LuCI **Подключить / Отключить** (v3.6.7+) — через ubus, без зависания на Save.
 
-### Домены не сохраняются / склеиваются / wdtt.conf пуст (v3.9.0)
+### Selective: трафик есть, но медленно (v3.9.4)
+
+1. **MTU** — LuCI → MTU **1240** (по умолчанию с v3.9.4). WG→DTLS→TURN: выше 1280 часто даёт фрагментацию.
+2. **dnsmasq-full** — обязателен для nftset: `apk del dnsmasq && apk add dnsmasq-full`
+3. **flow offloading** — выключить: `uci set firewall.@defaults[0].flow_offloading=0; uci set firewall.@defaults[0].flow_offloading_hw=0; uci commit firewall; /etc/init.d/firewall reload`
+4. **routing v3.9.3+** — MSS clamp + `rp_filter=loose` (в v3.9.4 по умолчанию при `routing reload`):
+
+```bash
+uclient-fetch -O /usr/libexec/wdtt/routing \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-routing
+chmod 755 /usr/libexec/wdtt/routing
+/usr/libexec/wdtt/routing reload wg-wdtt
+/usr/libexec/wdtt/doctor
+```
+
+### Домены не сохраняются / склеиваются / wdtt.conf пуст (v3.9.4)
 
 Обновление с ПК (без полной переустановки):
 
@@ -131,7 +179,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -319,7 +367,7 @@ uci commit wdtt
 | Параметр | Значение |
 |----------|----------|
 | Потоки (`workers`) | 12 (макс. 24) |
-| MTU | 1380 |
+| MTU | 1240 (WG→DTLS→TURN оверхед; выше — фрагментация и просадка скорости) |
 | Режим | selective |
 | Место на flash | ~15 МБ (бинарник + зависимости) |
 

@@ -22,7 +22,7 @@ type Config struct {
 	Workers     int      // -n
 	CaptchaMode string   // -captcha-mode
 	VKAuthMode  string   // vkcalls | legacy
-	MTU         int      // 0 = default 1380
+	MTU         int      // 0 = default 1240
 }
 
 // EventType — тип события от ядра.

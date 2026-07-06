@@ -320,7 +320,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'mtu', 'MTU');
 		o.datatype = 'uinteger';
-		o.default = '1380';
+		o.default = '1240';
 
 		o = s.option(form.ListValue, 'captcha_mode', _('Режим капчи'),
 			_('Auto/RJS — роутер решает капчу сам. WV — вы открываете ссылку в браузере и вставляете success_token (рекомендуется после лимита VK).'));

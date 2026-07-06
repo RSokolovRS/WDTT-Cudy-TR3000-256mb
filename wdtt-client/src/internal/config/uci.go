@@ -89,7 +89,7 @@ func Load(path string) (*Settings, error) {
 		Peer:        strings.TrimSpace(g["peer"]),
 		Password:    g["password"],
 		Workers:     atoiDefault(g["workers"], 12),
-		MTU:         atoiDefault(g["mtu"], 1380),
+		MTU:         atoiDefault(g["mtu"], 1240),
 		Listen:      defaultString(g["listen"], "127.0.0.1:9000"),
 		TurnHost:    strings.TrimSpace(g["turn_host"]),
 		TurnPort:    strings.TrimSpace(g["turn_port"]),
@@ -239,7 +239,7 @@ func (s *Settings) Validate() error {
 		s.Workers = 108
 	}
 	if s.MTU <= 0 {
-		s.MTU = 1380
+		s.MTU = 1240
 	}
 	if s.Iface == "" {
 		s.Iface = "wg-wdtt"
