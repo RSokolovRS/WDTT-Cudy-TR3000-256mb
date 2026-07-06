@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.1
+# WDTT_ROUTING_VERSION=3.9.2
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -517,7 +517,19 @@ populate_rule_nft() {
 	esac
 }
 
+# MSS = MTU туннеля - 40 (IPv4 20 + TCP 20). Без этого selective-трафик через
+# wg-wdtt (MTU 1380) фрагментируется/попадает в PMTU blackhole → медленно.
+wg_mss() {
+	local mtu
+	mtu="$(cat "/sys/class/net/${IFACE}/mtu" 2>/dev/null)"
+	[ -n "$mtu" ] || mtu="$(uci -q get wdtt.globals.mtu 2>/dev/null)"
+	[ -n "$mtu" ] || mtu=1380
+	echo $((mtu - 40))
+}
+
 write_nft_hook() {
+	local mss
+	mss="$(wg_mss)"
 	mkdir -p "$STATE_DIR"
 	cat > "$NFT_HOOK" <<EOF
 table ${NFT_FAMILY} ${NFT_TABLE} {
@@ -541,6 +553,12 @@ table ${NFT_FAMILY} ${NFT_TABLE} {
 		ip daddr @${NFT_SET_EXCL} return
 		ip saddr @${NFT_SET_SRC} meta mark set ${MARK}
 		ip daddr @${NFT_SET_ROUTE} meta mark set ${MARK}
+	}
+
+	chain mssfix {
+		type filter hook forward priority mangle; policy accept;
+		oifname "${IFACE}" tcp flags syn tcp option maxseg size set ${mss}
+		iifname "${IFACE}" tcp flags syn tcp option maxseg size set ${mss}
 	}
 }
 EOF
@@ -620,7 +638,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.9.1"
+	log "starting selective routing (nft) on $IFACE v3.9.2"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
