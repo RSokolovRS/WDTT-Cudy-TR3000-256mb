@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.8.9"
-WDTT_ROUTING_VERSION="3.8.9"
+WDTT_INSTALL_VERSION="3.9.0"
+WDTT_ROUTING_VERSION="3.9.0"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
