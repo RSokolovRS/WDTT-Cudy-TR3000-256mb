@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.0
+# WDTT_ROUTING_VERSION=3.9.1
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -39,11 +39,14 @@ check_dnsmasq_nftset() {
 		echo "ERROR: dnsmasq not found" >&2
 		return 1
 	fi
-	if dnsmasq --version 2>/dev/null | grep -qi nftset; then
+	# ВАЖНО: не 'grep -qi nftset' — оно матчит 'no-nftset' и даёт ложный OK.
+	# Разбиваем опции по словам и ищем точное слово 'nftset'.
+	if dnsmasq --version 2>/dev/null | tr ' ,' '\n\n' | grep -qx 'nftset'; then
 		return 0
 	fi
-	log "ERROR: dnsmasq без nftset — apk add dnsmasq-full"
+	log "ERROR: dnsmasq без nftset — нужен dnsmasq-full (apk del dnsmasq; apk add dnsmasq-full)"
 	echo "ERROR: dnsmasq-full required for selective routing (nftset)" >&2
+	echo "  apk update && apk del dnsmasq && apk add dnsmasq-full" >&2
 	return 1
 }
 
@@ -617,7 +620,7 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.9.0"
+	log "starting selective routing (nft) on $IFACE v3.9.1"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 

@@ -49,7 +49,7 @@ echo "--- dnsmasq ---"
 if [ "$ROUTING_MODE" = "full" ]; then
 	echo "SKIP: dnsmasq nftset не нужен в режиме full"
 else
-	if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --version 2>/dev/null | grep -qi nftset; then
+	if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --version 2>/dev/null | tr ' ,' '\n\n' | grep -qx 'nftset'; then
 		echo "OK: dnsmasq nftset"
 	else
 		echo "FAIL: нужен dnsmasq-full:"

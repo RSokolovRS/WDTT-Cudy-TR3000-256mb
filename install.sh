@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.9.0"
-WDTT_ROUTING_VERSION="3.9.0"
+WDTT_INSTALL_VERSION="3.9.1"
+WDTT_ROUTING_VERSION="3.9.1"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -881,8 +881,10 @@ apk_install_one() {
 }
 
 dnsmasq_has_nftset() {
+	# НЕ 'grep -qi nftset' — оно матчит 'no-nftset' и даёт ложный OK,
+	# из-за чего dnsmasq-full не ставился. Точное слово 'nftset'.
 	command -v dnsmasq >/dev/null 2>&1 \
-		&& dnsmasq --version 2>/dev/null | grep -qi nftset
+		&& dnsmasq --version 2>/dev/null | tr ' ,' '\n\n' | grep -qx 'nftset'
 }
 
 # dnsmasq и dnsmasq-full — взаимоисключающие; для selective routing нужен только full (nftset)
