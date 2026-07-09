@@ -11,7 +11,7 @@ CLEAN_ARG=""
 [ "$2" = "--clean" ] && CLEAN_ARG="--clean"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="/tmp/wdtt-pc-install"
-VERSION="3.9.4"
+VERSION="3.9.5"
 REPO="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb"
 PIN="3c3a91b"
 MIN_BIN_SIZE=1048576
@@ -85,6 +85,7 @@ tar czf "$TMP/wdtt-repo.tar.gz" -C "$DIR" \
 	wdtt-client/files/wdtt-fix-config \
 	wdtt-client/files/wdtt-doctor \
 	wdtt-client/files/wdtt-full-tunnel \
+	wdtt-client/files/wdtt-firewall-refresh \
 	wdtt-client/files/wdtt-uplink \
 	wdtt-client/files/wdtt-domain-lib.sh \
 	wdtt-client/files/wdtt-set-domains \

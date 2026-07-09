@@ -63,11 +63,63 @@ else
 	fi
 fi
 
-echo "--- wireguard ---"
+echo "--- wireguard / datapath ---"
 if ip link show "$IFACE" >/dev/null 2>&1; then
 	echo "OK: $IFACE up"
+	ep="$(wg show "$IFACE" 2>/dev/null | awk '/endpoint:/ {print $2; exit}')"
+	hs="$(wg show "$IFACE" 2>/dev/null | awk -F': ' '/latest handshake/ {print $2; exit}')"
+	tr="$(wg show "$IFACE" 2>/dev/null | awk -F': ' '/transfer:/ {print $2; exit}')"
+	echo "endpoint: ${ep:-(none)}"
+	echo "handshake: ${hs:-(none)}"
+	echo "transfer: ${tr:-(none)}"
+	case "$ep" in
+	127.0.0.1:*|\[::1\]:*) echo "OK: endpoint localhost (wdttd)" ;;
+	"") echo "FAIL: нет endpoint — LuCI → Переподключить" ;;
+	*) echo "FAIL: endpoint=$ep (ожидается 127.0.0.1:9000) — сервер/конфиг WG" ;;
+	esac
+	if [ -z "$hs" ] || echo "$hs" | grep -qiE 'never|ago.*(hour|day)'; then
+		echo "FAIL: нет свежего handshake — TURN/uplink/воркеры (не routing_mode)"
+		echo "  uci get wdtt.globals.uplink_iface; /usr/libexec/wdtt/uplink status"
+	else
+		echo "OK: handshake свежий"
+	fi
+	if echo "$tr" | grep -qE '^[0-9]'; then
+		echo "OK: есть transfer"
+	else
+		echo "WARN: transfer пуст — трафик через туннель не идёт"
+	fi
 else
-	echo "WARN: $IFACE down — сначала LuCI → Подключить"
+	echo "FAIL: $IFACE down — сначала LuCI → Подключить"
+fi
+
+echo "--- firewall / NAT (оба режима) ---"
+if [ -x /usr/libexec/wdtt/firewall-refresh ] && ip link show "$IFACE" >/dev/null 2>&1; then
+	/usr/libexec/wdtt/firewall-refresh "$IFACE" >/dev/null 2>&1 || true
+fi
+if uci -q get firewall.wdtt >/dev/null 2>&1; then
+	echo "OK: firewall zone wdtt (masq=$(uci -q get firewall.wdtt.masq))"
+else
+	echo "FAIL: нет firewall.wdtt — sh /usr/libexec/wdtt/firewall-refresh"
+fi
+if uci -q get firewall.wdtt_lan_fwd.src >/dev/null 2>&1; then
+	echo "OK: lan→wdtt forwarding"
+else
+	echo "FAIL: нет lan→wdtt — клиенты LAN не попадут в туннель"
+fi
+if nft list chain inet fw4 srcnat 2>/dev/null | grep -q "oifname \"$IFACE\""; then
+	echo "OK: masquerade oifname $IFACE"
+else
+	echo "FAIL: нет masquerade на $IFACE — /usr/libexec/wdtt/firewall-refresh $IFACE"
+fi
+if sysctl -n net.ipv4.ip_forward 2>/dev/null | grep -q '^1$'; then
+	echo "OK: ip_forward=1"
+else
+	echo "FAIL: ip_forward=0"
+fi
+if pgrep -x wdttd >/dev/null 2>&1 && (netstat -ulnp 2>/dev/null || ss -ulnp 2>/dev/null) | grep -q '127.0.0.1:9000'; then
+	echo "OK: wdttd слушает 127.0.0.1:9000"
+else
+	echo "WARN: wdttd/9000 — проверьте /etc/init.d/wdtt restart"
 fi
 
 if [ "$ROUTING_MODE" = "full" ]; then

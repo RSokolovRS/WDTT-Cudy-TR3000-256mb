@@ -182,6 +182,10 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				d.status.SetError(err)
 			} else {
 				var routingErr error
+				// NAT/zone для LAN → wg-wdtt (оба режима; selective раньше пропускал)
+				if err := routing.RefreshFirewall(d.wg.Iface()); err != nil {
+					log.Printf("[WDTT] firewall-refresh: %v", err)
+				}
 				if d.cfg != nil && d.cfg.IsSelective() {
 					_ = routing.Stop()
 					if err := routing.Start(d.wg.Iface(), d.cfg); err != nil {

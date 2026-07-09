@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.9.4"
-WDTT_ROUTING_VERSION="3.9.4"
+WDTT_INSTALL_VERSION="3.9.5"
+WDTT_ROUTING_VERSION="3.9.5"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -472,15 +472,26 @@ WDR_EOF
 }
 
 install_wdtt_helpers() {
-	local f dest ok=0
+	local f dest src ok=0
 
 	mkdir -p /usr/libexec/wdtt
-	for f in fix-config doctor full-tunnel uplink set-domains domain-lib; do
-		dest="/usr/libexec/wdtt/$f"
-		if download_file "$RAW_URL/wdtt-client/files/wdtt-$f" "$dest" 2>/dev/null \
-			|| install_repo_file "wdtt-client/files/wdtt-$f" "$dest" "$f" 2>/dev/null; then
+	# dest:имя на роутере  src:путь в репо
+	for f in \
+		"fix-config:wdtt-client/files/wdtt-fix-config" \
+		"doctor:wdtt-client/files/wdtt-doctor" \
+		"full-tunnel:wdtt-client/files/wdtt-full-tunnel" \
+		"uplink:wdtt-client/files/wdtt-uplink" \
+		"set-domains:wdtt-client/files/wdtt-set-domains" \
+		"domain-lib.sh:wdtt-client/files/wdtt-domain-lib.sh" \
+		"firewall-refresh:wdtt-client/files/wdtt-firewall-refresh"
+	do
+		dest="/usr/libexec/wdtt/${f%%:*}"
+		src="${f#*:}"
+		if download_file "$RAW_URL/$src" "$dest" 2>/dev/null \
+			|| download_file "${JSDELIVR_PIN}/$src" "$dest" 2>/dev/null \
+			|| install_repo_file "$src" "$dest" "${f%%:*}" 2>/dev/null; then
 			chmod 0755 "$dest"
-			msg "  OK: wdtt-$f"
+			msg "  OK: ${f%%:*}"
 			ok=1
 		fi
 	done

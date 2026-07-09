@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.4
+# WDTT_ROUTING_VERSION=3.9.5
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -645,9 +645,12 @@ do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.9.4"
+	log "starting selective routing (nft) on $IFACE v3.9.5"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
+
+	# NAT/zone/forward для LAN → wg-wdtt (раньше делал только full-tunnel)
+	[ -x /usr/libexec/wdtt/firewall-refresh ] && /usr/libexec/wdtt/firewall-refresh "$IFACE" >/dev/null 2>&1 || true
 
 	ensure_dnsmasq_confdir
 	check_dnsmasq_nftset || return 1

@@ -42,6 +42,25 @@ func Reload(iface string) error {
 	return nil
 }
 
+// RefreshFirewall поднимает zone/NAT/forward для wg-wdtt (оба режима).
+func RefreshFirewall(iface string) error {
+	if iface == "" {
+		iface = "wg-wdtt"
+	}
+	script := "/usr/libexec/wdtt/firewall-refresh"
+	if _, err := exec.LookPath(script); err != nil {
+		// старый образ без скрипта — best-effort через firewall.wdtt
+		_ = exec.Command("/etc/firewall.wdtt").Run()
+		return nil
+	}
+	cmd := exec.Command(script, iface)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("firewall-refresh: %w — %s", err, string(out))
+	}
+	return nil
+}
+
 // ApplyFullTunnel настраивает default routes и NAT для режима full (LAN → wg).
 func ApplyFullTunnel(iface string) error {
 	if iface == "" {

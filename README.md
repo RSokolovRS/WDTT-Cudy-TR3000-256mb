@@ -4,20 +4,20 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.9.4 (рекомендуется — без кэша jsDelivr)
+### Рабочие ссылки v3.9.5 (рекомендуется — без кэша jsDelivr)
 
 | Назначение | URL |
 |------------|-----|
-| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7be4a85/install.sh` |
-| routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5bda32c/wdtt-client/files/wdtt-routing` |
-| domain-lib | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5bda32c/wdtt-client/files/wdtt-domain-lib.sh` |
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh` |
+| routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-routing` |
+| firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-firewall-refresh` |
 | push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
 
 Установка одной командой (pin):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7be4a85/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -48,7 +48,7 @@ apk del wget-nossl
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7be4a85/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -64,7 +64,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7be4a85/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
 
@@ -72,7 +72,7 @@ sh /tmp/wdtt-install.sh --clean
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7be4a85/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh --uninstall
 ```
 
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.9.4+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.9.5+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 
@@ -119,22 +119,38 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 LuCI **Подключить / Отключить** (v3.6.7+) — через ubus, без зависания на Save.
 
-### Selective: трафик есть, но медленно (v3.9.4)
+### Нет трафика в любом режиме (v3.9.5)
 
-1. **MTU** — LuCI → MTU **1240** (по умолчанию с v3.9.4). WG→DTLS→TURN: выше 1280 часто даёт фрагментацию.
+Частая причина: `wg-wdtt` поднят, а **NAT/зона firewall** не привязаны (selective раньше не делал `fw4 reload`).
+
+```bash
+/usr/libexec/wdtt/firewall-refresh wg-wdtt
+/usr/libexec/wdtt/doctor
+# смотри: handshake, masquerade, lan→wdtt, endpoint 127.0.0.1:9000
+```
+
+Если `FAIL: нет свежего handshake` — проблема TURN/uplink, не правил:
+`uci get wdtt.globals.uplink_iface; /usr/libexec/wdtt/uplink status`
+
+### Selective: трафик есть, но медленно (v3.9.5)
+
+1. **MTU** — LuCI → MTU **1240**. WG→DTLS→TURN: выше 1280 часто даёт фрагментацию.
 2. **dnsmasq-full** — обязателен для nftset: `apk del dnsmasq && apk add dnsmasq-full`
 3. **flow offloading** — выключить: `uci set firewall.@defaults[0].flow_offloading=0; uci set firewall.@defaults[0].flow_offloading_hw=0; uci commit firewall; /etc/init.d/firewall reload`
-4. **routing v3.9.3+** — MSS clamp + `rp_filter=loose` (в v3.9.4 по умолчанию при `routing reload`):
+4. **routing v3.9.5+** — MSS clamp + `rp_filter=loose` + firewall-refresh:
 
 ```bash
 uclient-fetch -O /usr/libexec/wdtt/routing \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5bda32c/wdtt-client/files/wdtt-routing
-chmod 755 /usr/libexec/wdtt/routing
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-routing
+uclient-fetch -O /usr/libexec/wdtt/firewall-refresh \
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@CONTENT_PIN/wdtt-client/files/wdtt-firewall-refresh
+chmod 755 /usr/libexec/wdtt/routing /usr/libexec/wdtt/firewall-refresh
+/usr/libexec/wdtt/firewall-refresh wg-wdtt
 /usr/libexec/wdtt/routing reload wg-wdtt
 /usr/libexec/wdtt/doctor
 ```
 
-### Домены не сохраняются / склеиваются / wdtt.conf пуст (v3.9.4)
+### Домены не сохраняются / склеиваются / wdtt.conf пуст (v3.9.5)
 
 Обновление с ПК (без полной переустановки):
 
@@ -179,7 +195,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7be4a85/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@INSTALL_PIN/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
