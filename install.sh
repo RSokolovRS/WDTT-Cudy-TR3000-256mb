@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.9.9"
-WDTT_ROUTING_VERSION="3.9.9"
+WDTT_INSTALL_VERSION="3.10.0"
+WDTT_ROUTING_VERSION="3.10.0"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -483,7 +483,8 @@ install_wdtt_helpers() {
 		"uplink:wdtt-client/files/wdtt-uplink" \
 		"set-domains:wdtt-client/files/wdtt-set-domains" \
 		"domain-lib.sh:wdtt-client/files/wdtt-domain-lib.sh" \
-		"firewall-refresh:wdtt-client/files/wdtt-firewall-refresh"
+		"firewall-refresh:wdtt-client/files/wdtt-firewall-refresh" \
+		"keepalive:wdtt-client/files/wdtt-keepalive"
 	do
 		dest="/usr/libexec/wdtt/${f%%:*}"
 		src="${f#*:}"
@@ -497,6 +498,17 @@ install_wdtt_helpers() {
 	done
 	[ -x /usr/libexec/wdtt/fix-config ] || install_wdtt_fix_config_inline
 	[ -x /usr/libexec/wdtt/doctor ] || install_wdtt_doctor_inline
+
+	# cron: раз в минуту чинит table 100 / nft если слетели
+	if [ -x /usr/libexec/wdtt/keepalive ]; then
+		if [ -d /etc/crontabs ] || mkdir -p /etc/crontabs 2>/dev/null; then
+			touch /etc/crontabs/root
+			grep -q 'wdtt/keepalive' /etc/crontabs/root 2>/dev/null \
+				|| echo '* * * * * /usr/libexec/wdtt/keepalive' >> /etc/crontabs/root
+			/etc/init.d/cron restart 2>/dev/null || /etc/init.d/crond restart 2>/dev/null || true
+			msg "  OK: keepalive cron (* * * * *)"
+		fi
+	fi
 }
 
 install_from_source() {

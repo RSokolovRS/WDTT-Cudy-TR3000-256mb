@@ -1,0 +1,52 @@
+#!/bin/sh
+# Держит selective datapath живым: table 100, ip rule, nft table.
+# Запуск: cron */1 * * * * /usr/libexec/wdtt/keepalive
+# или из init после start.
+
+IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+IFACE="${IFACE:-wg-wdtt}"
+MARK=0x777474
+TABLE=100
+STATE="/var/run/wdtt/routing.mode"
+
+[ -f "$STATE" ] || exit 0
+mode="$(tr -d '\r\n' < "$STATE" 2>/dev/null)"
+[ "$mode" = "selective" ] || exit 0
+
+uci_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+[ "$uci_mode" = "full" ] && exit 0
+
+ip link show "$IFACE" >/dev/null 2>&1 || exit 0
+
+fixed=0
+
+# ip rule
+if ! ip rule show | grep -q "fwmark $MARK"; then
+	ip rule add fwmark "$MARK" table "$TABLE" priority 10050 2>/dev/null
+	fixed=1
+fi
+
+# table 100 default
+if ! ip route show table "$TABLE" 2>/dev/null | grep -q .; then
+	ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null \
+		|| ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null
+	fixed=1
+fi
+
+# nft table
+if ! nft list table inet wdtt >/dev/null 2>&1; then
+	if [ -x /usr/libexec/wdtt/routing ]; then
+		/usr/libexec/wdtt/routing restore "$IFACE" 2>/dev/null
+		fixed=1
+	fi
+fi
+
+# masq
+if ! nft list chain inet fw4 srcnat 2>/dev/null | grep -q "oifname \"$IFACE\""; then
+	[ -x /etc/firewall.wdtt ] && /etc/firewall.wdtt 2>/dev/null
+	fixed=1
+fi
+
+[ "$fixed" -eq 1 ] && logger -t wdtt-keepalive "repaired selective datapath (table100/nft/rule)"
+
+exit 0

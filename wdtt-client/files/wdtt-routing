@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.9
+# WDTT_ROUTING_VERSION=3.10.0
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -694,7 +694,7 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	# lock: hotplug не должен делать reload пока мы стартуем
 	: > "$STATE_DIR/firewall-refresh.lock"
-	log "starting selective routing (nft) on $IFACE v3.9.9"
+	log "starting selective routing (nft) on $IFACE v3.10.0"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
@@ -730,8 +730,31 @@ do_start() {
 		}
 
 		reload_dnsmasq
+		# dnsmasq/network иногда сносят policy routes — ещё раз
+		ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null \
+			|| ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null || true
 		warmup_nftset_domains
 		echo "selective" > "$STATE_DIR/routing.mode"
+
+		# фоновый сторож: первые 2 минуты подстраховать table 100
+		(
+			i=0
+			while [ "$i" -lt 24 ]; do
+				sleep 5
+				[ -f "$STATE_DIR/routing.mode" ] || exit 0
+				ip link show "$IFACE" >/dev/null 2>&1 || continue
+				if ! ip route show table "$TABLE" 2>/dev/null | grep -q .; then
+					ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null
+					logger -t wdtt-routing "keepalive: restored table $TABLE"
+				fi
+				if ! nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1; then
+					do_restore 2>/dev/null
+					logger -t wdtt-routing "keepalive: restored nft table"
+				fi
+				i=$((i + 1))
+			done
+		) &
+
 		if ip route show table "$TABLE" 2>/dev/null | grep -q .; then
 			log "selective routing active (table $TABLE ok)"
 		else
