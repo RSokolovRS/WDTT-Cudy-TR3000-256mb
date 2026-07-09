@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.9.5"
-WDTT_ROUTING_VERSION="3.9.5"
+WDTT_INSTALL_VERSION="3.9.6"
+WDTT_ROUTING_VERSION="3.9.6"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -413,27 +413,27 @@ install_hotplug_firewall_wdtt() {
 	local dest="/etc/hotplug.d/firewall/99-wdtt"
 
 	mkdir -p /etc/hotplug.d/firewall
-	cat > "$dest" <<'EOF'
+	if [ -n "$WDTT_LOCAL_REPO" ] && [ -f "$WDTT_LOCAL_REPO/luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" ]; then
+		cp -f "$WDTT_LOCAL_REPO/luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" "$dest"
+	elif download_file "${JSDELIVR_PIN}/luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" "$dest" 2>/dev/null \
+		|| download_file "${RAW_PIN}/luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" "$dest" 2>/dev/null \
+		|| install_repo_file "luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" "$dest" "hotplug-fw" 2>/dev/null; then
+		:
+	else
+		cat > "$dest" <<'EOF'
 #!/bin/sh
-# Re-apply selective routing after fw4 reload (nft table wdtt is not managed by fw4)
-
 [ "$ACTION" = "reload" ] || exit 0
 [ -f /var/run/wdtt/routing.mode ] || exit 0
-
+[ -f /var/run/wdtt/firewall-refresh.lock ] && exit 0
 routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
 [ "$routing_mode" = "full" ] && exit 0
-[ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ] && exit 0
-
-iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
-iface="${iface:-wg-wdtt}"
-
-logger -t wdtt-routing "firewall reload — re-applying selective routing on ${iface}"
-/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null
-
+iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"; iface="${iface:-wg-wdtt}"
+/usr/libexec/wdtt/routing restore "$iface" 2>/dev/null || /usr/libexec/wdtt/routing reload "$iface" 2>/dev/null
 exit 0
 EOF
+	fi
 	chmod 0755 "$dest"
-	msg "  OK: hotplug firewall (inline)"
+	msg "  OK: hotplug firewall"
 }
 
 install_wdtt_fix_config_inline() {

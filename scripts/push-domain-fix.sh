@@ -7,7 +7,7 @@ set -e
 
 ROUTER="${1:-root@192.168.10.1}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="3.9.5"
+VERSION="3.9.6"
 
 wdtt_scp() {
 	local src="$1" dest="$2"
@@ -39,10 +39,14 @@ wdtt_scp "$DIR/wdtt-client/files/wdtt-full-tunnel" \
 	"/usr/libexec/wdtt/full-tunnel"
 wdtt_scp "$DIR/luci-app-wdtt/root/etc/firewall.wdtt" \
 	"/etc/firewall.wdtt"
+ssh "$ROUTER" "mkdir -p /etc/hotplug.d/firewall"
+wdtt_scp "$DIR/luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" \
+	"/etc/hotplug.d/firewall/99-wdtt"
 
-ssh "$ROUTER" "chmod 755 /usr/libexec/rpcd/wdtt /usr/libexec/wdtt/* /etc/firewall.wdtt 2>/dev/null; \
+ssh "$ROUTER" "chmod 755 /usr/libexec/rpcd/wdtt /usr/libexec/wdtt/* /etc/firewall.wdtt \
+	/etc/hotplug.d/firewall/99-wdtt 2>/dev/null; \
 	printf '%s\n' '${VERSION}' > /usr/share/wdtt/version; \
-	/usr/libexec/wdtt/firewall-refresh wg-wdtt 2>/dev/null || true; \
+	/usr/libexec/wdtt/routing reload wg-wdtt 2>/dev/null || true; \
 	/etc/init.d/rpcd restart; rm -rf /tmp/luci-*"
 
 echo "=== OK. В браузере: Ctrl+F5 на странице WDTT ==="

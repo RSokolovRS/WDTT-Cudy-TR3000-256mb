@@ -182,18 +182,19 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				d.status.SetError(err)
 			} else {
 				var routingErr error
-				// NAT/zone для LAN → wg-wdtt (оба режима; selective раньше пропускал)
-				if err := routing.RefreshFirewall(d.wg.Iface()); err != nil {
-					log.Printf("[WDTT] firewall-refresh: %v", err)
-				}
 				if d.cfg != nil && d.cfg.IsSelective() {
 					_ = routing.Stop()
+					// routing.Start сам вызывает firewall-refresh ПОСЛЕ nft table
+					// (иначе fw4 reload стирает table inet wdtt → 0 трафика)
 					if err := routing.Start(d.wg.Iface(), d.cfg); err != nil {
 						log.Printf("[WDTT] selective routing failed: %v", err)
 						routingErr = err
 					}
 				} else {
 					_ = routing.Stop()
+					if err := routing.RefreshFirewall(d.wg.Iface()); err != nil {
+						log.Printf("[WDTT] firewall-refresh: %v", err)
+					}
 					if err := routing.ApplyFullTunnel(d.wg.Iface()); err != nil {
 						log.Printf("[WDTT] full tunnel setup failed: %v", err)
 						routingErr = err

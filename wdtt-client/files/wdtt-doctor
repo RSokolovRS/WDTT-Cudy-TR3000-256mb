@@ -92,9 +92,28 @@ else
 	echo "FAIL: $IFACE down — сначала LuCI → Подключить"
 fi
 
+echo "--- nft selective table ---"
+if [ "$ROUTING_MODE" != "full" ]; then
+	if nft list table inet wdtt >/dev/null 2>&1; then
+		echo "OK: table inet wdtt"
+		n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+') || n=0
+		echo "wdtt_route IPs: $n"
+		[ "$n" -eq 0 ] && echo "WARN: набор пуст — открой сайт из правил или nslookup через 127.0.0.1"
+	else
+		echo "FAIL: нет table inet wdtt — fw4 reload снёс selective; /usr/libexec/wdtt/routing restore $IFACE"
+	fi
+	ip rule show | grep -q 0x777474 && echo "OK: ip rule fwmark" || echo "FAIL: нет ip rule fwmark"
+	ip route show table 100 2>/dev/null | grep -q . && echo "OK: table 100" || echo "FAIL: table 100 пуста"
+fi
+
 echo "--- firewall / NAT (оба режима) ---"
 if [ -x /usr/libexec/wdtt/firewall-refresh ] && ip link show "$IFACE" >/dev/null 2>&1; then
 	/usr/libexec/wdtt/firewall-refresh "$IFACE" >/dev/null 2>&1 || true
+	# после refresh снова проверить nft (не должен пропасть)
+	if [ "$ROUTING_MODE" != "full" ] && ! nft list table inet wdtt >/dev/null 2>&1; then
+		echo "WARN: nft table пропала после firewall-refresh — restore"
+		/usr/libexec/wdtt/routing restore "$IFACE" 2>/dev/null || true
+	fi
 fi
 if uci -q get firewall.wdtt >/dev/null 2>&1; then
 	echo "OK: firewall zone wdtt (masq=$(uci -q get firewall.wdtt.masq))"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.5
+# WDTT_ROUTING_VERSION=3.9.6
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -641,27 +641,57 @@ reload_dnsmasq() {
 	pgrep -x dnsmasq >/dev/null 2>&1 || /etc/init.d/dnsmasq start 2>/dev/null
 }
 
+# Восстановить nft+policy после fw4 reload (без рестарта dnsmasq).
+do_restore() {
+	mkdir -p "$STATE_DIR"
+	[ -f "$STATE_DIR/routing.mode" ] || {
+		echo "selective" > "$STATE_DIR/routing.mode"
+	}
+	setup_nft || return 1
+	config_load wdtt 2>/dev/null || true
+	populate_nft_static 2>/dev/null || true
+	setup_policy_routing
+	# masq без fw4 reload
+	[ -x /etc/firewall.wdtt ] && /etc/firewall.wdtt 2>/dev/null || true
+	log "selective routing restored (nft+policy after fw4)"
+	return 0
+}
+
 do_start() {
 	local rc=0
 
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
-	log "starting selective routing (nft) on $IFACE v3.9.5"
+	# lock: hotplug не должен делать reload пока мы стартуем
+	: > "$STATE_DIR/firewall-refresh.lock"
+	log "starting selective routing (nft) on $IFACE v3.9.6"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
-	# NAT/zone/forward для LAN → wg-wdtt (раньше делал только full-tunnel)
-	[ -x /usr/libexec/wdtt/firewall-refresh ] && /usr/libexec/wdtt/firewall-refresh "$IFACE" >/dev/null 2>&1 || true
-
 	ensure_dnsmasq_confdir
-	check_dnsmasq_nftset || return 1
+	check_dnsmasq_nftset || {
+		rm -f "$STATE_DIR/firewall-refresh.lock"
+		return 1
+	}
 
 	build_dnsmasq || rc=1
 
+	# Сначала nft table, потом firewall (без fw4 reload по возможности).
+	# Иначе fw4 reload стирает table inet wdtt → 0 трафика.
 	setup_nft || rc=1
 	if [ "$rc" -eq 0 ]; then
 		config_load wdtt
 		populate_nft_static
 		setup_policy_routing
+
+		if [ -x /usr/libexec/wdtt/firewall-refresh ]; then
+			/usr/libexec/wdtt/firewall-refresh "$IFACE" >/dev/null 2>&1 || true
+			# если fw4 всё же перезагрузился — восстановить nft
+			if ! nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1; then
+				log "WARN: nft table lost after firewall-refresh — restore"
+				do_restore || rc=1
+			fi
+		fi
+
 		reload_dnsmasq
 		warmup_nftset_domains
 		echo "selective" > "$STATE_DIR/routing.mode"
@@ -671,6 +701,7 @@ do_start() {
 		log "selective routing FAILED (see errors above)"
 	fi
 
+	rm -f "$STATE_DIR/firewall-refresh.lock"
 	return "$rc"
 }
 
@@ -758,11 +789,18 @@ case "$1" in
 		do_reload
 		EXIT_RC=$?
 		;;
+	restore)
+		# после fw4 reload: только nft+policy, без dnsmasq restart
+		routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+		[ "$routing_mode" = "full" ] && exit 0
+		do_restore
+		EXIT_RC=$?
+		;;
 	status)
 		do_status
 		;;
 	*)
-		echo "Usage: $0 {start|stop|reload|status} [iface]" >&2
+		echo "Usage: $0 {start|stop|reload|restore|status} [iface]" >&2
 		exit 1
 		;;
 esac
