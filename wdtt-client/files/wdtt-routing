@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.8
+# WDTT_ROUTING_VERSION=3.9.9
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -681,7 +681,7 @@ do_restore() {
 	setup_nft || return 1
 	config_load wdtt 2>/dev/null || true
 	populate_nft_static 2>/dev/null || true
-	setup_policy_routing
+	setup_policy_routing || ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null || true
 	# masq без fw4 reload
 	[ -x /etc/firewall.wdtt ] && /etc/firewall.wdtt 2>/dev/null || true
 	log "selective routing restored (nft+policy after fw4)"
@@ -694,7 +694,7 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	# lock: hotplug не должен делать reload пока мы стартуем
 	: > "$STATE_DIR/firewall-refresh.lock"
-	log "starting selective routing (nft) on $IFACE v3.9.8"
+	log "starting selective routing (nft) on $IFACE v3.9.9"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
@@ -723,10 +723,21 @@ do_start() {
 			fi
 		fi
 
+		# После firewall-refresh/hotplug table 100 иногда пустеет — добить маршрут
+		setup_policy_routing || {
+			log "WARN: re-setup policy routing after firewall"
+			ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null || true
+		}
+
 		reload_dnsmasq
 		warmup_nftset_domains
 		echo "selective" > "$STATE_DIR/routing.mode"
-		log "selective routing active"
+		if ip route show table "$TABLE" 2>/dev/null | grep -q .; then
+			log "selective routing active (table $TABLE ok)"
+		else
+			log "ERROR: selective active but table $TABLE still empty"
+			rc=1
+		fi
 	else
 		rm -f "$STATE_DIR/routing.mode"
 		log "selective routing FAILED (see errors above)"
