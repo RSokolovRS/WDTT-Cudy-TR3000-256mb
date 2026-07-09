@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.6
+# WDTT_ROUTING_VERSION=3.9.7
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -551,8 +551,16 @@ table ${NFT_FAMILY} ${NFT_TABLE} {
 		type filter hook prerouting priority mangle; policy accept;
 		ip saddr @${NFT_SET_EXCL} return
 		ip daddr @${NFT_SET_EXCL} return
-		ip saddr @${NFT_SET_SRC} meta mark set ${MARK}
-		ip daddr @${NFT_SET_ROUTE} meta mark set ${MARK}
+		ip saddr @${NFT_SET_SRC} meta mark set ${MARK} counter
+		ip daddr @${NFT_SET_ROUTE} meta mark set ${MARK} counter
+	}
+
+	# Локально сгенерированный трафик (роутер) не проходит prerouting —
+	# без output curl/nslookup с роутера никогда не попадут в туннель.
+	chain output {
+		type route hook output priority mangle; policy accept;
+		ip daddr @${NFT_SET_EXCL} return
+		ip daddr @${NFT_SET_ROUTE} meta mark set ${MARK} counter
 	}
 
 	chain mssfix {
@@ -663,7 +671,7 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	# lock: hotplug не должен делать reload пока мы стартуем
 	: > "$STATE_DIR/firewall-refresh.lock"
-	log "starting selective routing (nft) on $IFACE v3.9.6"
+	log "starting selective routing (nft) on $IFACE v3.9.7"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 

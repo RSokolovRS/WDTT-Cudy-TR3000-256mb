@@ -98,12 +98,30 @@ if [ "$ROUTING_MODE" != "full" ]; then
 		echo "OK: table inet wdtt"
 		n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+') || n=0
 		echo "wdtt_route IPs: $n"
-		[ "$n" -eq 0 ] && echo "WARN: набор пуст — открой сайт из правил или nslookup через 127.0.0.1"
+		if [ "$n" -eq 0 ]; then
+			echo "FAIL: набор пуст — трафик в туннель НЕ пойдёт"
+			echo "  cat /tmp/dnsmasq.d/wdtt.conf"
+			echo "  nslookup 2ip.ru 127.0.0.1; nft list set inet wdtt wdtt_route"
+			echo "  # ручной тест: nft add element inet wdtt wdtt_route { 188.40.167.82 }"
+		fi
+		if nft list chain inet wdtt output >/dev/null 2>&1; then
+			echo "OK: chain output (локальный трафик роутера)"
+		else
+			echo "WARN: нет chain output — обнови routing до v3.9.7+"
+		fi
+		nft list chain inet wdtt prerouting 2>/dev/null | grep -q counter \
+			&& echo "OK: mark counters в prerouting" || true
 	else
 		echo "FAIL: нет table inet wdtt — fw4 reload снёс selective; /usr/libexec/wdtt/routing restore $IFACE"
 	fi
 	ip rule show | grep -q 0x777474 && echo "OK: ip rule fwmark" || echo "FAIL: нет ip rule fwmark"
 	ip route show table 100 2>/dev/null | grep -q . && echo "OK: table 100" || echo "FAIL: table 100 пуста"
+	echo "wdtt.conf:"
+	if [ -s /tmp/dnsmasq.d/wdtt.conf ]; then
+		cat /tmp/dnsmasq.d/wdtt.conf
+	else
+		echo "FAIL: /tmp/dnsmasq.d/wdtt.conf пуст — нет доменов в правилах"
+	fi
 fi
 
 echo "--- firewall / NAT (оба режима) ---"
