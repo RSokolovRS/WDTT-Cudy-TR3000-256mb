@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.9.7
+# WDTT_ROUTING_VERSION=3.9.8
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -626,12 +626,34 @@ teardown_nft() {
 }
 
 setup_policy_routing() {
+	local i ok=0
+
 	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null
 	ip route flush table "$TABLE" 2>/dev/null
 	ip rule add fwmark "$MARK" table "$TABLE" priority 10050
-	ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null || {
-		log "WARN: no route in table $TABLE for dev $IFACE (WireGuard up?)"
-	}
+
+	# КРИТИЧНО: без default в table 100 маркированные пакеты никуда не идут
+	# (transfer ≈ keepalive). Повторяем — iface может ещё подниматься.
+	for i in 1 2 3 4 5; do
+		if ! ip link show "$IFACE" >/dev/null 2>&1; then
+			sleep 1
+			continue
+		fi
+		if ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null \
+			|| ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null; then
+			ok=1
+			break
+		fi
+		sleep 1
+	done
+
+	if [ "$ok" -eq 1 ] && ip route show table "$TABLE" 2>/dev/null | grep -q .; then
+		log "OK: table $TABLE → default dev $IFACE"
+	else
+		log "ERROR: table $TABLE empty — traffic will NOT enter tunnel"
+		echo "ERROR: ip route replace default dev $IFACE table $TABLE failed" >&2
+		return 1
+	fi
 
 	# При policy-routing по fwmark ответный трафик приходит через туннель, а в
 	# main-таблице маршрут к серверу идёт через WAN → строгий rp_filter (=1)
@@ -639,6 +661,7 @@ setup_policy_routing() {
 	sysctl -qw net.ipv4.conf.all.rp_filter=2 2>/dev/null
 	sysctl -qw net.ipv4.conf.default.rp_filter=2 2>/dev/null
 	sysctl -qw "net.ipv4.conf.${IFACE}.rp_filter=2" 2>/dev/null
+	return 0
 }
 
 reload_dnsmasq() {
@@ -671,7 +694,7 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	# lock: hotplug не должен делать reload пока мы стартуем
 	: > "$STATE_DIR/firewall-refresh.lock"
-	log "starting selective routing (nft) on $IFACE v3.9.7"
+	log "starting selective routing (nft) on $IFACE v3.9.8"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
@@ -689,7 +712,7 @@ do_start() {
 	if [ "$rc" -eq 0 ]; then
 		config_load wdtt
 		populate_nft_static
-		setup_policy_routing
+		setup_policy_routing || rc=1
 
 		if [ -x /usr/libexec/wdtt/firewall-refresh ]; then
 			/usr/libexec/wdtt/firewall-refresh "$IFACE" >/dev/null 2>&1 || true
