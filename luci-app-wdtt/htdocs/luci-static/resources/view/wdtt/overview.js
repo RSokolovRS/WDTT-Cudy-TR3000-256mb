@@ -294,7 +294,7 @@ return view.extend({
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Настройки туннеля'));
 
 		o = s.option(form.Flag, 'enabled', _('Включить'),
-			_('Автоматически поднимать туннель при загрузке роутера.'));
+			_('Автозапуск при загрузке. Управление туннелем — кнопки «Подключить» / «Отключить» в блоке «Статус» (они же меняют этот флаг).'));
 		o.default = '0';
 		o.rmempty = false;
 
@@ -591,12 +591,16 @@ return view.extend({
 		st = st || {};
 		var pkgVer = String(st.package_version || '').trim();
 		var wdttdVer = String(st.wdttd_version || st.version || '').trim();
+		var enabled = String(st.enabled != null ? st.enabled : '');
+		var wgUp = st.wg_iface_up === true || st.wg_iface_up === 1 || st.wg_iface_up === '1';
 		return E('table', { 'class': 'table' }, [
 			pkgVer ? E('tr', {}, [E('td', { 'width': '200' }, _('Версия WDTT')), E('td', {}, pkgVer)]) : '',
 			wdttdVer ? E('tr', {}, [E('td', {}, _('Демон wdttd')), E('td', {}, wdttdVer)]) : '',
 			E('tr', {}, [E('td', { 'width': '200' }, _('Состояние')), E('td', {}, stateBadge(st.state))]),
 			E('tr', {}, [E('td', {}, _('Работает')), E('td', {}, st.running ? _('Да') : _('Нет'))]),
-			E('tr', {}, [E('td', {}, _('WireGuard')), E('td', {}, st.wg_applied ? _('Поднят') : _('Нет'))]),
+			enabled !== '' ? E('tr', {}, [E('td', {}, _('UCI enabled')), E('td', {}, enabled === '1' ? _('1 (вкл)') : _('0 (выкл)'))]) : '',
+			E('tr', {}, [E('td', {}, _('WireGuard')), E('td', {},
+				st.wg_applied ? _('Поднят') : (wgUp ? _('iface up') : _('Нет')))]),
 			E('tr', {}, [E('td', {}, _('Воркеры')), E('td', {}, String(st.workers || 0))]),
 			E('tr', {}, [E('td', {}, _('Uptime')), E('td', {}, (st.uptime_sec || 0) + ' s')]),
 			st.last_error ? E('tr', {}, [E('td', {}, _('Ошибка')), E('td', { 'style': 'color:#c00' }, st.last_error)]) : ''
@@ -696,6 +700,9 @@ return view.extend({
 			var panel = document.getElementById('wdtt-status-panel');
 			if (panel)
 				dom.content(panel, self.renderStatus(st));
+
+			if (st.enabled === '0' || st.enabled === '1')
+				self.syncEnabledFlag(st.enabled);
 
 			self.updateTrafficLine(st);
 			self.refreshRulesLog();
@@ -831,6 +838,17 @@ return view.extend({
 				throw new Error(res.error);
 			}
 			self.syncEnabledFlag('0');
+			var panel = document.getElementById('wdtt-status-panel');
+			if (panel)
+				dom.content(panel, self.renderStatus({
+					state: 'stopped',
+					running: false,
+					wg_applied: false,
+					wg_iface_up: false,
+					enabled: '0',
+					workers: 0,
+					uptime_sec: 0
+				}));
 			ui.addTimeLimitedNotification(null, E('p', {}, _('Туннель остановлен')), 3000);
 			return self.pollStatus();
 		}).catch(function(e) {

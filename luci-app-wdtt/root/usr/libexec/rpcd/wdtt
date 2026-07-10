@@ -7,6 +7,17 @@
 STATUS_FILE="/var/run/wdtt/status.json"
 LOG_FILE="/var/run/wdtt/wdtt.log"
 
+wdtt_write_stopped_status() {
+	mkdir -p /var/run/wdtt
+	cat > "$STATUS_FILE" <<'EOF'
+{"running":false,"state":"stopped","rx_bytes":0,"tx_bytes":0,"workers":0,"wg_applied":false,"uptime_sec":0}
+EOF
+}
+
+wdtt_alive() {
+	pgrep -x wdttd >/dev/null 2>&1
+}
+
 wdtt_connect() {
 	uci -q set wdtt.globals.enabled='1' || return 1
 	uci -q commit wdtt || return 1
@@ -297,10 +308,28 @@ wdtt_apply_config() {
 }
 
 wdtt_disconnect() {
+	local iface
+	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+	iface="${iface:-wg-wdtt}"
+
 	uci -q set wdtt.globals.enabled='0' || return 1
 	uci -q commit wdtt || return 1
-	/etc/init.d/wdtt stop 2>/dev/null
-	killall wdttd 2>/dev/null
+
+	# Сначала procd stop (снимает respawn), потом добиваем процесс
+	/etc/init.d/wdtt stop 2>/dev/null || true
+	killall wdttd 2>/dev/null || true
+	sleep 1
+	if wdtt_alive; then
+		killall -9 wdttd 2>/dev/null || true
+		sleep 1
+	fi
+
+	/usr/libexec/wdtt/routing stop 2>/dev/null || true
+	[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel stop 2>/dev/null || true
+	ip link del "$iface" 2>/dev/null || true
+
+	# status.json иначе остаётся "connected" — LuCI врёт
+	wdtt_write_stopped_status
 	return 0
 }
 
@@ -316,10 +345,26 @@ case "$1" in
 				[ -r /usr/share/wdtt/version ] && pkg_ver=$(tr -d '\r\n' < /usr/share/wdtt/version | head -c 32)
 				wdttd_ver=""
 				[ -x /usr/sbin/wdttd ] && wdttd_ver=$(/usr/sbin/wdttd -version 2>/dev/null | tr -d '\r\n' | head -c 32)
+				iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+				iface="${iface:-wg-wdtt}"
+				enabled="$(uci -q get wdtt.globals.enabled 2>/dev/null)"
+				enabled="${enabled:-0}"
 
-				if [ -f "$STATUS_FILE" ]; then
-					json_load "$(cat "$STATUS_FILE")"
+				if wdtt_alive; then
+					if [ -f "$STATUS_FILE" ]; then
+						json_load "$(cat "$STATUS_FILE")"
+					else
+						json_init
+						json_add_boolean running 1
+						json_add_string state "starting"
+						json_add_int rx_bytes 0
+						json_add_int tx_bytes 0
+						json_add_int workers 0
+						json_add_boolean wg_applied 0
+					fi
 				else
+					# Демон мёртв — не показываем stale "connected" из status.json
+					wdtt_write_stopped_status
 					json_init
 					json_add_boolean running 0
 					json_add_string state "stopped"
@@ -328,6 +373,14 @@ case "$1" in
 					json_add_int workers 0
 					json_add_boolean wg_applied 0
 				fi
+
+				if ip link show "$iface" >/dev/null 2>&1; then
+					json_add_boolean wg_iface_up 1
+				else
+					json_add_boolean wg_iface_up 0
+				fi
+
+				json_add_string enabled "$enabled"
 				json_add_string package_version "$pkg_ver"
 				[ -n "$wdttd_ver" ] && json_add_string wdttd_version "$wdttd_ver"
 				json_dump

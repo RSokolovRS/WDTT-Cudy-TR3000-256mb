@@ -26,6 +26,14 @@ stop_service() {
 	/usr/libexec/wdtt/routing stop 2>/dev/null
 	# procd SIGTERM иногда не успевает при captcha wait — добиваем явно
 	killall wdttd 2>/dev/null
+	# Не оставляем LuCI со stale "connected"
+	mkdir -p /var/run/wdtt
+	cat > /var/run/wdtt/status.json <<'EOF'
+{"running":false,"state":"stopped","rx_bytes":0,"tx_bytes":0,"workers":0,"wg_applied":false,"uptime_sec":0}
+EOF
+	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
+	iface="${iface:-wg-wdtt}"
+	ip link del "$iface" 2>/dev/null || true
 }
 
 service_triggers() {

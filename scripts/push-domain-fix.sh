@@ -7,7 +7,7 @@ set -e
 
 ROUTER="${1:-root@192.168.10.1}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="3.11.0"
+VERSION="3.11.1"
 
 wdtt_scp() {
 	local src="$1" dest="$2"
@@ -29,6 +29,8 @@ wdtt_scp "$DIR/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js"
 	"/www/luci-static/resources/view/wdtt/overview.js"
 wdtt_scp "$DIR/luci-app-wdtt/root/usr/libexec/rpcd/wdtt" \
 	"/usr/libexec/rpcd/wdtt"
+wdtt_scp "$DIR/luci-app-wdtt/root/etc/init.d/wdtt" \
+	"/etc/init.d/wdtt"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-fix-config" \
 	"/usr/libexec/wdtt/fix-config"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-routing" \
@@ -46,7 +48,7 @@ wdtt_scp "$DIR/luci-app-wdtt/root/etc/hotplug.d/firewall/99-wdtt" \
 	"/etc/hotplug.d/firewall/99-wdtt"
 
 ssh "$ROUTER" "chmod 755 /usr/libexec/rpcd/wdtt /usr/libexec/wdtt/* /etc/firewall.wdtt \
-	/etc/hotplug.d/firewall/99-wdtt 2>/dev/null; \
+	/etc/init.d/wdtt /etc/hotplug.d/firewall/99-wdtt 2>/dev/null; \
 	printf '%s\n' '${VERSION}' > /usr/share/wdtt/version; \
 	touch /etc/crontabs/root; \
 	grep -q 'wdtt/keepalive' /etc/crontabs/root 2>/dev/null \
