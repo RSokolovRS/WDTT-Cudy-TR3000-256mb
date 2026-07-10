@@ -41,6 +41,7 @@ type Settings struct {
 	TurnPort             string
 	CaptchaMode          string
 	VKAuthMode           string
+	ObfsMode             string // audio | video
 	DeviceID             string
 	Iface                string
 	UplinkIface          string // auto | wan | wwan | network section / device
@@ -95,6 +96,7 @@ func Load(path string) (*Settings, error) {
 		TurnPort:    strings.TrimSpace(g["turn_port"]),
 		CaptchaMode: defaultString(g["captcha_mode"], "wv"),
 		VKAuthMode:  defaultString(g["vk_auth_mode"], "vkcalls"),
+		ObfsMode:    normalizeObfsMode(g["obfs_mode"]),
 		DeviceID:    defaultString(g["device_id"], ""),
 		Iface:       defaultString(g["iface"], "wg-wdtt"),
 		UplinkIface: defaultString(g["uplink_iface"], "auto"),
@@ -270,6 +272,15 @@ func defaultString(v, def string) string {
 		return def
 	}
 	return strings.TrimSpace(v)
+}
+
+func normalizeObfsMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "video":
+		return "video"
+	default:
+		return "audio"
+	}
 }
 
 func atoiDefault(v string, def int) int {

@@ -11,6 +11,8 @@ config globals 'globals'
 	option turn_port ''
 	option captcha_mode 'wv'
 	option vk_auth_mode 'vkcalls'
+	# audio = OPUS PT 111 (совместимо со всеми серверами); video = PT 96 (нужен сервер с поддержкой)
+	option obfs_mode 'audio'
 	option device_id ''
 	option iface 'wg-wdtt'
 	# selective = правила решают, что идёт в туннель; full = весь трафик через WDTT

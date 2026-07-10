@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.10.0"
-WDTT_ROUTING_VERSION="3.10.0"
+WDTT_INSTALL_VERSION="3.11.0"
+WDTT_ROUTING_VERSION="3.11.0"
 WDTT_BIN_TAG="v3.8.3"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -716,6 +716,7 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.enabled 2>/dev/null > "$f/enabled"
 	uci -q get wdtt.globals.captcha_mode 2>/dev/null > "$f/captcha_mode"
 	uci -q get wdtt.globals.vk_auth_mode 2>/dev/null > "$f/vk_auth_mode"
+	uci -q get wdtt.globals.obfs_mode 2>/dev/null > "$f/obfs_mode"
 	uci -q get wdtt.globals.workers 2>/dev/null > "$f/workers"
 	uci -q get wdtt.globals.routing_mode 2>/dev/null > "$f/routing_mode"
 	uci -q get wdtt.globals.uplink_iface 2>/dev/null > "$f/uplink_iface"
@@ -733,7 +734,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes enabled captcha_mode vk_auth_mode workers routing_mode uplink_iface; do
+	for v in peer password hashes enabled captcha_mode vk_auth_mode obfs_mode workers routing_mode uplink_iface; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"
@@ -767,6 +768,7 @@ apply_clean_routing_defaults() {
 	uci -q set wdtt.globals.routing_mode='selective'
 	uci -q set wdtt.globals.captcha_mode='wv'
 	uci -q set wdtt.globals.vk_auth_mode='vkcalls'
+	uci -q set wdtt.globals.obfs_mode='audio'
 	sed -i '/^[[:space:]]*option domain[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/list domain.*2iw/d' /etc/config/wdtt 2>/dev/null

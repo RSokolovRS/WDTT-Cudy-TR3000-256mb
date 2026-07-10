@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.10.0 (рекомендуется — без кэша jsDelivr)
+### Рабочие ссылки v3.11.0 (рекомендуется — без кэша jsDelivr)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.10.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.11.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -178,9 +179,15 @@ func RunSession(
 	// Initialize obfs config per session
 	var obfsCfg *ObfsConfig
 	var obfsWriteState *ObfsState
+	var wrapAEAD cipher.AEAD
 	if useWrap {
-		obfsCfg = NewObfsConfig()
+		obfsCfg = NewObfsConfig(tp.ObfsMode)
 		obfsWriteState = NewObfsState()
+		var aeadErr error
+		wrapAEAD, aeadErr = getAEAD(tp.WrapKey)
+		if aeadErr != nil {
+			return false, fmt.Errorf("obfs aead: %w", aeadErr)
+		}
 	}
 
 	stopRelay := context.AfterFunc(sessCtx, func() {
@@ -193,8 +200,8 @@ func RunSession(
 	go func() {
 		defer relayWg.Done()
 		defer sessCancel()
-		// Max incoming: RTP header (12) + AEAD tag (16) + padding.
-		readBufLen := readBufSize + 80
+		// Max incoming: RTP header (12) + AEAD tag (16) + padding (video up to 60).
+		readBufLen := readBufSize + 120
 		buf := make([]byte, readBufLen)
 		plain := make([]byte, readBufSize)
 		for {
@@ -208,7 +215,7 @@ func RunSession(
 					log.Printf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
 					continue
 				}
-				m, wrapErr := obfsUnwrapPacket(tp.WrapKey, payload, plain)
+				m, wrapErr := obfsUnwrapPacketAEAD(wrapAEAD, payload, plain)
 				if wrapErr != nil {
 					log.Printf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
 					continue
@@ -221,11 +228,15 @@ func RunSession(
 		}
 	}()
 
-	// pipeA → relay (WRAP: add RTP header + encrypt)
+	// pipeA → relay (WRAP: add RTP header + encrypt, zero-alloc into txBuf)
 	go func() {
 		defer relayWg.Done()
 		defer sessCancel()
 		b := make([]byte, readBufSize)
+		var txBuf []byte
+		if useWrap && obfsCfg != nil {
+			txBuf = make([]byte, obfsWrapWireLen(readBufSize, obfsCfg))
+		}
 		for {
 			n, _, readErr := pipeA.ReadFrom(b)
 			if readErr != nil {
@@ -233,13 +244,13 @@ func RunSession(
 			}
 			out := b[:n]
 			if useWrap {
-				if obfsCfg != nil && obfsWriteState != nil {
-					wrapped, wrapErr := obfsWrapPacket(tp.WrapKey, out, obfsCfg, obfsWriteState)
+				if obfsCfg != nil && obfsWriteState != nil && wrapAEAD != nil {
+					wn, wrapErr := obfsWrapPacketInto(txBuf, wrapAEAD, out, obfsCfg, obfsWriteState)
 					if wrapErr != nil {
 						log.Printf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
 						return
 					}
-					out = wrapped
+					out = txBuf[:wn]
 				}
 			}
 			if _, writeErr := relay.WriteTo(out, peer); writeErr != nil {
@@ -370,7 +381,7 @@ func RunSession(
 				if !ok {
 					return
 				}
-				_ = dtlsConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				_ = dtlsConn.SetWriteDeadline(time.Now().Add(sessionReadTimeout))
 				_, writeErr := dtlsConn.Write(pkt)
 				putPktBuf(pkt)
 				if writeErr != nil {

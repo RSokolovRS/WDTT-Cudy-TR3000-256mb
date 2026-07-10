@@ -22,6 +22,7 @@ type Config struct {
 	Workers     int      // -n
 	CaptchaMode string   // -captcha-mode
 	VKAuthMode  string   // vkcalls | legacy
+	ObfsMode    string   // audio | video
 	MTU         int      // 0 = default 1240
 }
 
@@ -165,10 +166,11 @@ func (c *Core) Start() (<-chan Event, error) {
 	n = (n / workersPerGroup) * workersPerGroup
 
 	tp := &TurnParams{
-		Host:    c.cfg.TurnHost,
-		Port:    c.cfg.TurnPort,
-		Hashes:  c.cfg.Hashes,
-		WrapKey: wrapKey,
+		Host:     c.cfg.TurnHost,
+		Port:     c.cfg.TurnPort,
+		Hashes:   c.cfg.Hashes,
+		WrapKey:  wrapKey,
+		ObfsMode: normalizeObfsMode(c.cfg.ObfsMode),
 	}
 
 	localConn, err := net.ListenPacket("udp", c.cfg.Listen)
@@ -353,5 +355,14 @@ func normalizeVKAuthMode(mode string) string {
 		return "legacy"
 	default:
 		return "vkcalls"
+	}
+}
+
+func normalizeObfsMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "video":
+		return "video"
+	default:
+		return "audio"
 	}
 }

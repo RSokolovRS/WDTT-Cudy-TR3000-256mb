@@ -115,6 +115,7 @@ func (d *Daemon) runWithConfig(ctx context.Context, cfg *config.Settings) error 
 		Workers:     cfg.Workers,
 		CaptchaMode: cfg.CaptchaMode,
 		VKAuthMode:  cfg.VKAuthMode,
+		ObfsMode:    cfg.ObfsMode,
 		MTU:         cfg.MTU,
 	}
 

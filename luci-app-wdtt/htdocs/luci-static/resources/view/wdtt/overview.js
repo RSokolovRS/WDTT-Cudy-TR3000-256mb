@@ -335,6 +335,12 @@ return view.extend({
 		o.value('legacy', _('Legacy (капча)'));
 		o.default = 'vkcalls';
 
+		o = s.option(form.ListValue, 'obfs_mode', _('Обфускация RTP'),
+			_('Audio — OPUS PT 111 (по умолчанию, совместимо со всеми серверами). Video — PT 96 + больший padding (нужен wdtt-server с поддержкой PT 96).'));
+		o.value('audio', _('Audio (PT 111)'));
+		o.value('video', _('Video (PT 96)'));
+		o.default = 'audio';
+
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
 			_('Полный — весь трафик через WDTT. Выборочный — только правила ниже. После смены режима: Save & Apply внизу страницы.'));
 		o.value('selective', _('Выборочный (правила)'));

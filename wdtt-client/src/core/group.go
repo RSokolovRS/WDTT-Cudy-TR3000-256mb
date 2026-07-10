@@ -92,6 +92,10 @@ func WorkerGroup(
 			break
 		}
 		log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
+		if callErr, ok := asCallUnavailableError(err); ok {
+			log.Printf("[ГРУППА #%d] Звонок недоступен (хеш мёртв?): %v — стоп ретраев", groupID, callErr)
+			return
+		}
 		if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
 			return
 		}
@@ -134,7 +138,11 @@ func WorkerGroup(
 		defer refreshCancel()
 		u, p, urls, refreshErr := GetCreds(refreshCtx, hash, credStreamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 		if refreshErr != nil {
-			log.Printf("[TURN] Не удалось обновить креды после %s: %v", reason, refreshErr)
+			if callErr, ok := asCallUnavailableError(refreshErr); ok {
+				log.Printf("[TURN] Звонок недоступен при обновлении кредов: %v", callErr)
+			} else {
+				log.Printf("[TURN] Не удалось обновить креды после %s: %v", reason, refreshErr)
+			}
 			return false
 		}
 
@@ -325,10 +333,11 @@ func normalizeVKJoinHash(input string) string {
 
 // TurnParams — конфигурация TURN
 type TurnParams struct {
-	Host    string
-	Port    string
-	Hashes  []string
-	WrapKey []byte // Password-derived WRAP key (32 bytes), nil = disabled
+	Host     string
+	Port     string
+	Hashes   []string
+	WrapKey  []byte // Password-derived WRAP key (32 bytes), nil = disabled
+	ObfsMode string // audio (default) | video
 }
 
 // Credentials — учетные данные TURN
