@@ -852,25 +852,50 @@ EXIT_RC=0
 case "$1" in
 	start)
 		routing_mode="$(uci -q get wdtt.globals.routing_mode)"
-		[ "$routing_mode" = "full" ] && exit 0
-		[ "$(uci -q get wdtt.globals.full_tunnel)" = "1" ] && exit 0
+		if [ "$routing_mode" = "full" ] || [ "$(uci -q get wdtt.globals.full_tunnel)" = "1" ]; then
+			# Раньше молчаливый exit 0 — казалось что start OK, а nft/table 100 пустые
+			msg="SKIP selective start: routing_mode=${routing_mode:-?} (full tunnel — nft/table100 не нужны)"
+			log "$msg"
+			echo "$msg" >&2
+			echo "  Для доменов: uci set wdtt.globals.routing_mode=selective; uci commit wdtt; $0 start $IFACE" >&2
+			exit 0
+		fi
 		do_start
 		EXIT_RC=$?
+		if [ "$EXIT_RC" -eq 0 ]; then
+			if ! nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1; then
+				echo "ERROR: start rc=0 but nft table inet wdtt missing" >&2
+				log "ERROR: start rc=0 but nft table missing"
+				EXIT_RC=1
+			elif ! ip route show table "$TABLE" 2>/dev/null | grep -q .; then
+				echo "ERROR: start rc=0 but table $TABLE empty" >&2
+				log "ERROR: start rc=0 but table $TABLE empty"
+				EXIT_RC=1
+			else
+				echo "OK: selective routing (nft + table $TABLE)" >&2
+			fi
+		fi
 		;;
 	stop)
 		do_stop
 		;;
 	reload)
 		routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
-		[ "$routing_mode" = "full" ] && { do_stop; exit 0; }
-		[ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ] && { do_stop; exit 0; }
+		if [ "$routing_mode" = "full" ] || [ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ]; then
+			do_stop
+			echo "SKIP selective reload: mode=full" >&2
+			exit 0
+		fi
 		do_reload
 		EXIT_RC=$?
 		;;
 	restore)
 		# после fw4 reload: только nft+policy, без dnsmasq restart
 		routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
-		[ "$routing_mode" = "full" ] && exit 0
+		if [ "$routing_mode" = "full" ]; then
+			echo "SKIP restore: mode=full" >&2
+			exit 0
+		fi
 		do_restore
 		EXIT_RC=$?
 		;;
