@@ -4,20 +4,20 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.11.0 (рекомендуется — без кэша jsDelivr)
+### Рабочие ссылки v3.11.1 (рекомендуется — без кэша jsDelivr)
 
 | Назначение | URL |
 |------------|-----|
-| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@99f3161/install.sh` |
-| routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a608a5c/wdtt-client/files/wdtt-routing` |
-| firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a608a5c/wdtt-client/files/wdtt-firewall-refresh` |
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6bef2e2/install.sh` |
+| routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@f1cddc6/wdtt-client/files/wdtt-routing` |
+| firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@f1cddc6/wdtt-client/files/wdtt-firewall-refresh` |
 | push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
 
 Установка одной командой (pin):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@99f3161/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6bef2e2/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -48,7 +48,7 @@ apk del wget-nossl
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@99f3161/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6bef2e2/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -64,7 +64,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@99f3161/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6bef2e2/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
 
@@ -72,7 +72,7 @@ sh /tmp/wdtt-install.sh --clean
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@99f3161/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6bef2e2/install.sh
 sh /tmp/wdtt-install.sh --uninstall
 ```
 
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.11.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.11.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 **wdttd** качается с **jsDelivr** (`bin/wdttd-linux-arm64` в репо) — GitHub Releases с роутера не обязателен.
 
@@ -141,9 +141,9 @@ LuCI **Подключить / Отключить** (v3.6.7+) — через ubus
 
 ```bash
 uclient-fetch -O /usr/libexec/wdtt/routing \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a608a5c/wdtt-client/files/wdtt-routing
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@f1cddc6/wdtt-client/files/wdtt-routing
 uclient-fetch -O /usr/libexec/wdtt/firewall-refresh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@a608a5c/wdtt-client/files/wdtt-firewall-refresh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@f1cddc6/wdtt-client/files/wdtt-firewall-refresh
 chmod 755 /usr/libexec/wdtt/routing /usr/libexec/wdtt/firewall-refresh
 /usr/libexec/wdtt/firewall-refresh wg-wdtt
 /usr/libexec/wdtt/routing reload wg-wdtt
@@ -195,7 +195,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@99f3161/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6bef2e2/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -406,7 +406,7 @@ wdttd
         └── ip rule → table 100 → wg-wdtt
 ```
 
-## Обфускация RTP (obfs_mode, v3.11.0+)
+## Обфускация RTP (obfs_mode, v3.11.1+)
 
 LuCI → **Обфускация RTP** / UCI `wdtt.globals.obfs_mode`:
 
