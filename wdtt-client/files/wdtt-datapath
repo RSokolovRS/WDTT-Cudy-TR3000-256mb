@@ -1,6 +1,6 @@
 #!/bin/sh
 # Единая точка datapath: selective И full без ручного танца.
-# WDTT_DATAPATH_VERSION=3.12.1
+# WDTT_DATAPATH_VERSION=3.12.2
 #
 #   datapath ensure [iface]  — поднять/починить по UCI routing_mode
 #   datapath stop            — снять оба режима

@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.12.1 (рекомендуется — без кэша jsDelivr)
+### Рабочие ссылки v3.12.2 (рекомендуется — без кэша jsDelivr)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.12.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.12.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -376,7 +376,8 @@ uci set wdtt.globals.obfs_mode='audio'   # или video — только есл�
 uci set wdtt.youtube=rule
 uci set wdtt.youtube.enabled='1'
 uci set wdtt.youtube.type='route'
-uci set wdtt.youtube.domain_list='youtube.com,googlevideo.com,ytimg.com'
+uci set wdtt.youtube.domain_list='youtube.com,2ip.ru'
+# youtube.com автоматически добавляет CDN: googlevideo, ytimg, ggpht, gvt1, …
 
 uci commit wdtt
 /etc/init.d/wdtt restart
@@ -408,7 +409,7 @@ wdttd
         └── ip rule → table 100 → wg-wdtt
 ```
 
-## Обфускация RTP (obfs_mode, v3.12.1+)
+## Обфускация RTP (obfs_mode, v3.12.2+)
 
 LuCI → **Обфускация RTP** / UCI `wdtt.globals.obfs_mode`:
 

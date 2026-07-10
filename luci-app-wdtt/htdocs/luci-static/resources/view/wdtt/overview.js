@@ -386,9 +386,9 @@ return view.extend({
 		o.default = 'route';
 
 		o = s.option(form.TextValue, 'domain_list', _('Домены'),
-			_('Через запятую или с новой строки. Сохраняется одной строкой UCI. Пример: youtube.com, googlevideo.com'));
+			_('Через запятую или с новой строки. youtube.com сам подтягивает CDN (googlevideo, ytimg, …). Клиенты должны использовать DNS роутера (не DoH).'));
 		o.rows = 4;
-		o.placeholder = 'youtube.com, googlevideo.com, 2ip.ru';
+		o.placeholder = 'youtube.com, 2ip.ru';
 		o.rmempty = true;
 		o.load = function(section_id) {
 			var v = uci.get('wdtt', section_id, 'domain_list');
