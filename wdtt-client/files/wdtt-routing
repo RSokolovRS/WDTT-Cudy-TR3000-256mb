@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.11.1
+# WDTT_ROUTING_VERSION=3.12.1
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -53,31 +53,87 @@ check_dnsmasq_nftset() {
 _resolve_via_dnsmasq() {
 	local domain="$1"
 	if command -v dig >/dev/null 2>&1; then
-		dig +time=2 +tries=1 +short "@127.0.0.1" "$domain" A 2>/dev/null | grep -E '^[0-9]+\.' | head -n1
+		dig +time=2 +tries=1 +short "@127.0.0.1" "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
 		return 0
 	fi
-	nslookup "$domain" 127.0.0.1 2>/dev/null | awk '/^Address [0-9]/ { print $2; exit }'
+	nslookup "$domain" 127.0.0.1 2>/dev/null | awk '/^Address: / { print $2 } /^Address [0-9]+: / { print $3 }' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+_resolve_via_public() {
+	local domain="$1" dns
+	for dns in 1.1.1.1 8.8.8.8; do
+		if command -v dig >/dev/null 2>&1; then
+			dig +time=2 +tries=1 +short "@$dns" "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && return 0
+		fi
+	done
+	return 1
+}
+
+# Кладём IP напрямую в nft — не ждём DNS клиентов (DoH иначе оставляет set пустым).
+seed_domain_ips_into_nft() {
+	local domain="$1" ip count=0
+	domain="$(normalize_domain "$domain")"
+	[ -n "$domain" ] || return 0
+	case "$domain" in
+	*.*) ;;
+	*) return 0 ;;
+	esac
+
+	# Сначала через локальный dnsmasq (попутно прогреет nftset), потом публичный DNS
+	for ip in $(_resolve_via_dnsmasq "$domain") $(_resolve_via_public "$domain"); do
+		case "$ip" in
+		0.*|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) continue ;;
+		esac
+		if nft_add_one "$NFT_SET_ROUTE" "$ip"; then
+			count=$((count + 1))
+		fi
+	done
+	[ "$count" -gt 0 ] && log "seed: ${domain} → ${count} IP(s) in ${NFT_SET_ROUTE}"
+	return 0
+}
+
+collect_route_domains() {
+	local line domain sec dl
+	# из dnsmasq snippet
+	if [ -f "$DNSMASQ_SNIPPET" ]; then
+		while read -r line; do
+			domain="${line#nftset=/}"
+			domain="${domain%%/*}"
+			[ -n "$domain" ] && echo "$domain"
+		done <<EOF
+$(grep '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null)
+EOF
+	fi
+	# из UCI (на случай пустого conf)
+	if [ -x /sbin/uci ]; then
+		for sec in $(uci -q show wdtt 2>/dev/null | sed -n 's/^wdtt\.\([^.=]*\)=rule$/\1/p'); do
+			[ "$(uci -q get "wdtt.${sec}.type" 2>/dev/null)" = "exclusion" ] && continue
+			[ "$(uci -q get "wdtt.${sec}.enabled" 2>/dev/null)" = "0" ] && continue
+			dl="$(uci -q get "wdtt.${sec}.domain_list" 2>/dev/null)"
+			[ -n "$dl" ] && foreach_domain_text "$dl" echo
+		done
+	fi
+}
+
+# Главный фикс selective «почти нет трафика»: наполнить wdtt_route IP доменов.
+seed_nft_route_ips() {
+	local domain warmed=0 seen="" d
+	nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1 || return 1
+
+	for domain in $(collect_route_domains | awk 'NF && !seen[$0]++'); do
+		d="$(normalize_domain "$domain")"
+		[ -n "$d" ] || continue
+		is_ghost_domain "$d" && continue
+		seed_domain_ips_into_nft "$d"
+		warmed=$((warmed + 1))
+	done
+	log "seed: processed ${warmed} domain(s) into ${NFT_SET_ROUTE}"
+	return 0
 }
 
 warmup_nftset_domains() {
-	local domain line warmed=0 ip
-
-	[ -f "$DNSMASQ_SNIPPET" ] || return 0
-	while read -r line; do
-		domain="${line#nftset=/}"
-		domain="${domain%%/*}"
-		[ -n "$domain" ] || continue
-		ip="$(_resolve_via_dnsmasq "$domain")"
-		if [ -n "$ip" ]; then
-			warmed=$((warmed + 1))
-			log "warmup dns: ${domain} -> ${ip}"
-		else
-			log "WARN: warmup dns failed: ${domain}"
-		fi
-	done <<EOF
-$(grep '^nftset=' "$DNSMASQ_SNIPPET" 2>/dev/null)
-EOF
-	log "warmup: ${warmed} domain(s) resolved into nftset"
+	# совместимость: старое имя → новый seed
+	seed_nft_route_ips
 }
 
 NFTSET_SUFFIX="4#${NFT_FAMILY}#${NFT_TABLE}#"
@@ -685,6 +741,7 @@ do_restore() {
 	# masq без fw4 reload
 	[ -x /etc/firewall.wdtt ] && /etc/firewall.wdtt 2>/dev/null || true
 	log "selective routing restored (nft+policy after fw4)"
+	seed_nft_route_ips 2>/dev/null || true
 	return 0
 }
 
@@ -902,8 +959,13 @@ case "$1" in
 	status)
 		do_status
 		;;
+	seed)
+		# Наполнить wdtt_route IP доменов (DoH-proof)
+		seed_nft_route_ips
+		EXIT_RC=$?
+		;;
 	*)
-		echo "Usage: $0 {start|stop|reload|restore|status} [iface]" >&2
+		echo "Usage: $0 {start|stop|reload|restore|seed|status} [iface]" >&2
 		exit 1
 		;;
 esac
