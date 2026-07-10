@@ -49,10 +49,14 @@ define Package/wdtt-client/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/wdttd $(1)/usr/sbin/wdttd
 	$(INSTALL_DIR) $(1)/usr/libexec/wdtt
 	$(INSTALL_BIN) ./files/wdtt-routing $(1)/usr/libexec/wdtt/routing
+	$(INSTALL_BIN) ./files/wdtt-datapath $(1)/usr/libexec/wdtt/datapath
+	$(INSTALL_BIN) ./files/wdtt-keepalive $(1)/usr/libexec/wdtt/keepalive
+	$(INSTALL_BIN) ./files/wdtt-firewall-refresh $(1)/usr/libexec/wdtt/firewall-refresh
 	$(INSTALL_BIN) ./files/wdtt-fix-config $(1)/usr/libexec/wdtt/fix-config
 	$(INSTALL_BIN) ./files/wdtt-doctor $(1)/usr/libexec/wdtt/doctor
 	$(INSTALL_BIN) ./files/wdtt-full-tunnel $(1)/usr/libexec/wdtt/full-tunnel
 	$(INSTALL_BIN) ./files/wdtt-uplink $(1)/usr/libexec/wdtt/uplink
+	$(INSTALL_BIN) ./files/wdtt-domain-lib.sh $(1)/usr/libexec/wdtt/domain-lib.sh
 	$(INSTALL_DIR) $(1)/var/run/wdtt
 endef
 

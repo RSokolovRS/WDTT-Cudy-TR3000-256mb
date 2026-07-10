@@ -183,22 +183,10 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				d.status.SetError(err)
 			} else {
 				var routingErr error
-				if d.cfg != nil && d.cfg.IsSelective() {
-					// Не Stop() перед Start: после disconnect datapath уже снят,
-					// лишний stop+dnsmasq restart на reconnect часто оставляет table 100 пустой.
-					if err := routing.Start(d.wg.Iface(), d.cfg); err != nil {
-						log.Printf("[WDTT] selective routing failed: %v", err)
-						routingErr = err
-					}
-				} else {
-					_ = routing.Stop()
-					if err := routing.RefreshFirewall(d.wg.Iface()); err != nil {
-						log.Printf("[WDTT] firewall-refresh: %v", err)
-					}
-					if err := routing.ApplyFullTunnel(d.wg.Iface()); err != nil {
-						log.Printf("[WDTT] full tunnel setup failed: %v", err)
-						routingErr = err
-					}
+				// Единый datapath: selective или full по UCI — без Stop→Start гонок
+				if err := routing.EnsureWithConfig(d.wg.Iface(), d.cfg); err != nil {
+					log.Printf("[WDTT] datapath ensure failed: %v", err)
+					routingErr = err
 				}
 				d.status.SetWGApplied(true)
 				d.status.SetState("connected")

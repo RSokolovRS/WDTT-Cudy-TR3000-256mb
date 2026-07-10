@@ -7,7 +7,7 @@ set -e
 
 ROUTER="${1:-root@192.168.10.1}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="3.11.1"
+VERSION="3.12.0"
 
 wdtt_scp() {
 	local src="$1" dest="$2"
@@ -23,6 +23,8 @@ wdtt_scp "$DIR/wdtt-client/files/wdtt-domain-lib.sh" \
 	"/usr/libexec/wdtt/domain-lib.sh"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-firewall-refresh" \
 	"/usr/libexec/wdtt/firewall-refresh"
+wdtt_scp "$DIR/wdtt-client/files/wdtt-datapath" \
+	"/usr/libexec/wdtt/datapath"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-keepalive" \
 	"/usr/libexec/wdtt/keepalive"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-routing" \
@@ -56,10 +58,11 @@ ssh "$ROUTER" "chmod 755 /usr/libexec/rpcd/wdtt /usr/libexec/wdtt/* /etc/firewal
 	grep -q 'wdtt/keepalive' /etc/crontabs/root 2>/dev/null \
 		|| echo '* * * * * /usr/libexec/wdtt/keepalive' >> /etc/crontabs/root; \
 	/etc/init.d/cron restart 2>/dev/null || /etc/init.d/crond restart 2>/dev/null || true; \
-	/usr/libexec/wdtt/routing reload wg-wdtt 2>/dev/null || true; \
+	/usr/libexec/wdtt/datapath ensure 2>/dev/null \
+		|| /usr/libexec/wdtt/routing reload wg-wdtt 2>/dev/null || true; \
 	/etc/init.d/rpcd restart; rm -rf /tmp/luci-*"
 
 echo "=== OK. В браузере: Ctrl+F5 на странице WDTT ==="
 echo "На роутере:"
+echo "  /usr/libexec/wdtt/datapath status"
 echo "  /usr/libexec/wdtt/doctor"
-echo "  /etc/init.d/wdtt restart   # затем Подключить в LuCI"

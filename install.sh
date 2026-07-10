@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.11.1"
+WDTT_INSTALL_VERSION="3.12.0"
 WDTT_ROUTING_VERSION="3.11.1"
 WDTT_BIN_TAG="v3.8.3"
 
@@ -484,7 +484,8 @@ install_wdtt_helpers() {
 		"set-domains:wdtt-client/files/wdtt-set-domains" \
 		"domain-lib.sh:wdtt-client/files/wdtt-domain-lib.sh" \
 		"firewall-refresh:wdtt-client/files/wdtt-firewall-refresh" \
-		"keepalive:wdtt-client/files/wdtt-keepalive"
+		"keepalive:wdtt-client/files/wdtt-keepalive" \
+		"datapath:wdtt-client/files/wdtt-datapath"
 	do
 		dest="/usr/libexec/wdtt/${f%%:*}"
 		src="${f#*:}"

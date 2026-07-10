@@ -31,64 +31,18 @@ wdtt_iface_exists() {
 	ip link show "$iface" >/dev/null 2>&1
 }
 
-# После reconnect wg может быть up, а table 100 / nft — пустые → 0 трафика.
-wdtt_ensure_datapath() {
-	local iface mode i
-	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
-	iface="${iface:-wg-wdtt}"
-	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
-	mode="${mode:-selective}"
-
-	# Ждём появления WireGuard (до ~45с — TURN/DTLS)
-	i=0
-	while [ "$i" -lt 45 ]; do
-		wdtt_iface_exists "$iface" && break
-		wdtt_alive || true
-		sleep 1
-		i=$((i + 1))
-	done
-	wdtt_iface_exists "$iface" || return 1
-
-	if [ "$mode" = "full" ]; then
-		[ -x /usr/libexec/wdtt/firewall-refresh ] && /usr/libexec/wdtt/firewall-refresh "$iface" 2>/dev/null || true
-		[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel apply 2>/dev/null || true
-		return 0
-	fi
-
-	# Selective: если daemon уже поднял routing — только добить table 100.
-	# Если routing.mode нет / table пуста — полный start/restore.
-	if [ ! -f /var/run/wdtt/routing.mode ] \
-		|| ! nft list table inet wdtt >/dev/null 2>&1 \
-		|| ! ip route show table 100 2>/dev/null | grep -q .; then
-		/usr/libexec/wdtt/routing start "$iface" 2>/dev/null \
-			|| /usr/libexec/wdtt/routing restore "$iface" 2>/dev/null \
-			|| /usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
-	fi
-
-	# Всегда гарантируем default в table 100
-	if ! ip route show table 100 2>/dev/null | grep -q .; then
-		ip route replace default dev "$iface" table 100 2>/dev/null \
-			|| ip route add default dev "$iface" table 100 2>/dev/null || true
-	fi
-	if ! ip rule show | grep -q "fwmark 0x777474"; then
-		ip rule add fwmark 0x777474 table 100 priority 10050 2>/dev/null || true
-	fi
-	[ -x /usr/libexec/wdtt/firewall-refresh ] && /usr/libexec/wdtt/firewall-refresh "$iface" 2>/dev/null || true
-	return 0
-}
-
 wdtt_connect() {
 	uci -q set wdtt.globals.enabled='1' || return 1
 	uci -q commit wdtt || return 1
 	/etc/init.d/wdtt restart 2>/dev/null || /etc/init.d/wdtt start 2>/dev/null
-	# Не блокируем ubus надолго: ensure в фоне после старта демона
+	# Единый datapath: ждёт wg и поднимает selective ИЛИ full по UCI
 	(
-		sleep 2
-		wdtt_ensure_datapath
-		# ещё раз через 15с — wg_config может прийти поздно
-		sleep 15
-		wdtt_ensure_datapath
-	) >/dev/null 2>&1 &
+		if [ -x /usr/libexec/wdtt/datapath ]; then
+			/usr/libexec/wdtt/datapath wait-ensure
+			sleep 20
+			/usr/libexec/wdtt/datapath ensure
+		fi
+	) >/tmp/wdtt-datapath-connect.log 2>&1 &
 	return 0
 }
 
@@ -332,7 +286,11 @@ wdtt_apply_rules() {
 	iface="${iface:-wg-wdtt}"
 	[ "$mode" = "full" ] && return 0
 	if ip link show "$iface" >/dev/null 2>&1; then
-		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
+		if [ -x /usr/libexec/wdtt/datapath ]; then
+			/usr/libexec/wdtt/datapath ensure "$iface" 2>/dev/null || true
+		else
+			/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
+		fi
 	fi
 	return 0
 }
@@ -355,21 +313,23 @@ wdtt_apply_config() {
 	printf '%s\n' "$mode" > /var/run/wdtt/last_routing_mode
 	printf '%s\n' "$uplink" > /var/run/wdtt/last_uplink_iface
 
-	if [ "$mode" = "full" ]; then
-		/usr/libexec/wdtt/routing stop 2>/dev/null || true
-		if ip link show "$iface" >/dev/null 2>&1; then
+	if ip link show "$iface" >/dev/null 2>&1; then
+		if [ -x /usr/libexec/wdtt/datapath ]; then
+			/usr/libexec/wdtt/datapath ensure "$iface" 2>/dev/null || true
+		elif [ "$mode" = "full" ]; then
+			/usr/libexec/wdtt/routing stop 2>/dev/null || true
 			[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel apply 2>/dev/null || true
 		else
-			printf '%s\n' "full" > /var/run/wdtt/routing.mode
+			/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
 		fi
-	elif ip link show "$iface" >/dev/null 2>&1; then
-		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
-	else
-		/usr/libexec/wdtt/routing stop 2>/dev/null || true
 	fi
 
 	if [ "$restart" -eq 1 ] && [ "$enabled" = "1" ] && wdtt_alive; then
 		/etc/init.d/wdtt restart 2>/dev/null || true
+		(
+			sleep 8
+			[ -x /usr/libexec/wdtt/datapath ] && /usr/libexec/wdtt/datapath ensure
+		) >/dev/null 2>&1 &
 	fi
 	return 0
 }
@@ -378,7 +338,6 @@ wdtt_disconnect() {
 	uci -q set wdtt.globals.enabled='0' || return 1
 	uci -q commit wdtt || return 1
 
-	# stop_service уже: routing stop + killall + status + ip link del
 	/etc/init.d/wdtt stop 2>/dev/null || true
 	killall wdttd 2>/dev/null || true
 	sleep 1
@@ -386,8 +345,11 @@ wdtt_disconnect() {
 		killall -9 wdttd 2>/dev/null || true
 	fi
 
-	# Добить остатки full-mode (stop_service трогает только selective routing)
-	[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel stop 2>/dev/null || true
+	if [ -x /usr/libexec/wdtt/datapath ]; then
+		/usr/libexec/wdtt/datapath stop 2>/dev/null || true
+	else
+		[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel stop 2>/dev/null || true
+	fi
 	wdtt_write_stopped_status
 	return 0
 }
@@ -468,17 +430,29 @@ case "$1" in
 					json_add_boolean wg_iface_up 0
 				fi
 
-				# Диагностика datapath (selective)
-				if [ "$enabled" = "1" ] && [ "$(uci -q get wdtt.globals.routing_mode 2>/dev/null)" != "full" ]; then
-					if ip route show table 100 2>/dev/null | grep -q .; then
-						json_add_boolean table100_ok 1
-					else
-						json_add_boolean table100_ok 0
+				# Диагностика datapath (оба режима)
+				if [ "$enabled" = "1" ]; then
+					if [ -x /usr/libexec/wdtt/datapath ]; then
+						if /usr/libexec/wdtt/datapath status >/dev/null 2>&1; then
+							json_add_boolean datapath_ok 1
+						else
+							json_add_boolean datapath_ok 0
+						fi
 					fi
-					if nft list table inet wdtt >/dev/null 2>&1; then
-						json_add_boolean nft_ok 1
-					else
-						json_add_boolean nft_ok 0
+					rmode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+					rmode="${rmode:-selective}"
+					json_add_string routing_mode "$rmode"
+					if [ "$rmode" != "full" ]; then
+						if ip route show table 100 2>/dev/null | grep -q .; then
+							json_add_boolean table100_ok 1
+						else
+							json_add_boolean table100_ok 0
+						fi
+						if nft list table inet wdtt >/dev/null 2>&1; then
+							json_add_boolean nft_ok 1
+						else
+							json_add_boolean nft_ok 0
+						fi
 					fi
 				fi
 

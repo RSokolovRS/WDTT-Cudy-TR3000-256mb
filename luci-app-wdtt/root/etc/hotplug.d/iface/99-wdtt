@@ -16,5 +16,9 @@ else
 fi
 
 /etc/init.d/wdtt restart
+(
+	sleep 5
+	[ -x /usr/libexec/wdtt/datapath ] && /usr/libexec/wdtt/datapath ensure
+) >/dev/null 2>&1 &
 
 exit 0

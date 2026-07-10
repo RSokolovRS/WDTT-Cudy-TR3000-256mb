@@ -601,9 +601,15 @@ return view.extend({
 			enabled !== '' ? E('tr', {}, [E('td', {}, _('UCI enabled')), E('td', {}, enabled === '1' ? _('1 (вкл)') : _('0 (выкл)'))]) : '',
 			E('tr', {}, [E('td', {}, _('WireGuard')), E('td', {},
 				st.wg_applied ? _('Поднят') : (wgUp ? _('iface up') : _('Нет')))]),
+			(st.datapath_ok === false || st.datapath_ok === 0 || st.datapath_ok === '0')
+				? E('tr', {}, [E('td', {}, _('Datapath')), E('td', { 'style': 'color:#c00' },
+					_('сломан — автопочинка: /usr/libexec/wdtt/datapath ensure'))])
+				: (st.datapath_ok === true || st.datapath_ok === 1 || st.datapath_ok === '1')
+					? E('tr', {}, [E('td', {}, _('Datapath')), E('td', {}, _('OK') + (st.routing_mode ? ' (' + st.routing_mode + ')' : ''))])
+					: '',
 			(st.table100_ok === false || st.table100_ok === 0 || st.table100_ok === '0')
 				? E('tr', {}, [E('td', {}, _('Table 100')), E('td', { 'style': 'color:#c00' },
-					_('пусто — трафик не в туннель. Выполните: /usr/libexec/wdtt/routing reload wg-wdtt'))])
+					_('пусто — трафик не в туннель'))])
 				: (st.table100_ok === true || st.table100_ok === 1 || st.table100_ok === '1')
 					? E('tr', {}, [E('td', {}, _('Table 100')), E('td', {}, _('OK'))])
 					: '',

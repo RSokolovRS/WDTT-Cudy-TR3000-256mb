@@ -23,7 +23,12 @@ start_service() {
 }
 
 stop_service() {
-	/usr/libexec/wdtt/routing stop 2>/dev/null
+	if [ -x /usr/libexec/wdtt/datapath ]; then
+		/usr/libexec/wdtt/datapath stop 2>/dev/null || true
+	else
+		/usr/libexec/wdtt/routing stop 2>/dev/null
+		[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel stop 2>/dev/null || true
+	fi
 	# procd SIGTERM иногда не успевает при captcha wait — добиваем явно
 	killall wdttd 2>/dev/null
 	# Не оставляем LuCI со stale "connected"
@@ -43,19 +48,22 @@ service_triggers() {
 reload_service() {
 	# UCI reload: правила / режим маршрутизации, туннель не рвём
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config 2>/dev/null || true
-	local mode iface
-	mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+	local iface
 	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 	iface="${iface:-wg-wdtt}"
 	mkdir -p /var/run/wdtt
-	if [ "$mode" = "full" ]; then
-		/usr/libexec/wdtt/routing stop 2>/dev/null || true
-		if ip link show "$iface" >/dev/null 2>&1; then
-			[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel apply 2>/dev/null || true
+	if ip link show "$iface" >/dev/null 2>&1; then
+		if [ -x /usr/libexec/wdtt/datapath ]; then
+			/usr/libexec/wdtt/datapath ensure "$iface" 2>/dev/null || true
 		else
-			printf '%s\n' "full" > /var/run/wdtt/routing.mode
+			# legacy fallback
+			mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
+			if [ "$mode" = "full" ]; then
+				/usr/libexec/wdtt/routing stop 2>/dev/null || true
+				[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel apply 2>/dev/null || true
+			else
+				/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
+			fi
 		fi
-	elif ip link show "$iface" >/dev/null 2>&1; then
-		/usr/libexec/wdtt/routing reload "$iface" 2>/dev/null || true
 	fi
 }
