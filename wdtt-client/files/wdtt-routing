@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.11.0
+# WDTT_ROUTING_VERSION=3.11.1
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -694,17 +694,25 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	# lock: hotplug не должен делать reload пока мы стартуем
 	: > "$STATE_DIR/firewall-refresh.lock"
-	log "starting selective routing (nft) on $IFACE v3.11.0"
+	log "starting selective routing (nft) on $IFACE v3.11.1"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
 	ensure_dnsmasq_confdir
-	check_dnsmasq_nftset || {
-		rm -f "$STATE_DIR/firewall-refresh.lock"
-		return 1
-	}
+	dns_ok=1
+	if ! check_dnsmasq_nftset; then
+		dns_ok=0
+		log "WARN: dnsmasq-full отсутствует — nft+policy всё равно поднимем; домены в set не попадут"
+		# Раньше return 1 здесь → table inet wdtt никогда не создавалась → 0 трафика
+	fi
 
-	build_dnsmasq || rc=1
+	if [ "$dns_ok" -eq 1 ]; then
+		build_dnsmasq || rc=1
+	else
+		# минимальный conf, чтобы confdir не был пустым
+		mkdir -p "$(dirname "$DNSMASQ_SNIPPET")"
+		: > "$DNSMASQ_SNIPPET"
+	fi
 
 	# Сначала nft table, потом firewall (без fw4 reload по возможности).
 	# Иначе fw4 reload стирает table inet wdtt → 0 трафика.
@@ -729,11 +737,16 @@ do_start() {
 			ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null || true
 		}
 
-		reload_dnsmasq
-		# dnsmasq/network иногда сносят policy routes — ещё раз
-		ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null \
-			|| ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null || true
-		warmup_nftset_domains
+		if [ "$dns_ok" -eq 1 ]; then
+			reload_dnsmasq
+			# dnsmasq/network иногда сносят policy routes — ещё раз
+			ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null \
+				|| ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null || true
+			warmup_nftset_domains
+		else
+			ip route replace default dev "$IFACE" table "$TABLE" 2>/dev/null \
+				|| ip route add default dev "$IFACE" table "$TABLE" 2>/dev/null || true
+		fi
 		echo "selective" > "$STATE_DIR/routing.mode"
 
 		# фоновый сторож: первые 2 минуты подстраховать table 100
