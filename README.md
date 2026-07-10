@@ -354,9 +354,10 @@ make package/luci-app-wdtt/compile V=s
 **Сервисы → WDTT VPN**:
 1. VPS (`IP:56000`), пароль, VK-хеши
 2. **Интернет (uplink)** — Авто / WAN / WWAN (кнопки в «Статус» или список в настройках): через какой канал идут VK/TURN
-3. **Подключить** — поднимается туннель (полный или выборочный — см. «Режим туннеля»)
-4. В режиме **выборочный**: добавьте правила (домены, устройства) → **Save & Apply** (туннель остаётся открытым)
-5. **Отключить** — туннель опускается
+3. **Обфускация RTP** — Audio (по умолчанию) или Video (см. ниже)
+4. **Подключить** — поднимается туннель (полный или выборочный — см. «Режим туннеля»)
+5. В режиме **выборочный**: добавьте правила (домены, устройства) → **Save & Apply** (туннель остаётся открытым)
+6. **Отключить** — туннель опускается
 
 ### UCI
 
@@ -368,6 +369,7 @@ uci set wdtt.globals.hashes='abc123'
 uci set wdtt.globals.routing_mode='selective'
 uci set wdtt.globals.uplink_iface='auto'
 uci set wdtt.globals.workers='12'
+uci set wdtt.globals.obfs_mode='audio'   # или video — только если VPS принимает PT 96
 
 uci set wdtt.youtube=rule
 uci set wdtt.youtube.enabled='1'
@@ -402,6 +404,23 @@ wdttd
         ├── dnsmasq nftset → inet wdtt (домены)
         ├── nft prerouting fwmark 0x777474
         └── ip rule → table 100 → wg-wdtt
+```
+
+## Обфускация RTP (obfs_mode, v3.11.0+)
+
+LuCI → **Обфускация RTP** / UCI `wdtt.globals.obfs_mode`:
+
+| Режим | Описание |
+|-------|----------|
+| **audio** (по умолчанию) | OPUS PT 111 — совместимо со всеми серверами |
+| **video** | PT 96 + больший padding |
+
+**Video mode имеет смысл только если на VPS `wdtt-server` принимает PT 96.** Старый сервер без поддержки PT 96 — оставляйте `audio`, иначе трафик не пойдёт.
+
+```bash
+uci set wdtt.globals.obfs_mode='audio'   # безопасно
+uci set wdtt.globals.obfs_mode='video'   # нужен сервер с PT 96
+uci commit wdtt && /etc/init.d/wdtt restart
 ```
 
 ## VK Auth (VKCalls без капчи)

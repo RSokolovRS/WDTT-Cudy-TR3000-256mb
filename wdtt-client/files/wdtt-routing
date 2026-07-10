@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.10.0
+# WDTT_ROUTING_VERSION=3.11.0
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh
@@ -694,7 +694,7 @@ do_start() {
 	mkdir -p "$STATE_DIR" "$(dirname "$DNSMASQ_SNIPPET")"
 	# lock: hotplug не должен делать reload пока мы стартуем
 	: > "$STATE_DIR/firewall-refresh.lock"
-	log "starting selective routing (nft) on $IFACE v3.10.0"
+	log "starting selective routing (nft) on $IFACE v3.11.0"
 
 	[ -x /usr/libexec/wdtt/fix-config ] && /usr/libexec/wdtt/fix-config >/dev/null 2>&1 || true
 
