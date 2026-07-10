@@ -1,7 +1,6 @@
 #!/bin/sh
 # Держит selective datapath живым: table 100, ip rule, nft table.
-# Запуск: cron */1 * * * * /usr/libexec/wdtt/keepalive
-# или из init после start.
+# Cron: * * * * * /usr/libexec/wdtt/keepalive
 
 IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 IFACE="${IFACE:-wg-wdtt}"
@@ -9,14 +8,27 @@ MARK=0x777474
 TABLE=100
 STATE="/var/run/wdtt/routing.mode"
 
-[ -f "$STATE" ] || exit 0
-mode="$(tr -d '\r\n' < "$STATE" 2>/dev/null)"
-[ "$mode" = "selective" ] || exit 0
+enabled="$(uci -q get wdtt.globals.enabled 2>/dev/null)"
+[ "$enabled" = "1" ] || exit 0
 
 uci_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
 [ "$uci_mode" = "full" ] && exit 0
 
+# Без iface — туннель ещё не поднят (или упал)
 ip link show "$IFACE" >/dev/null 2>&1 || exit 0
+
+# После disconnect→connect routing.mode может отсутствовать, хотя wg уже up.
+# Раньше keepalive сразу выходил — table 100 оставалась пустой навсегда.
+mode=""
+[ -f "$STATE" ] && mode="$(tr -d '\r\n' < "$STATE" 2>/dev/null)"
+if [ "$mode" != "selective" ]; then
+	if [ -x /usr/libexec/wdtt/routing ]; then
+		/usr/libexec/wdtt/routing start "$IFACE" >/dev/null 2>&1 \
+			|| /usr/libexec/wdtt/routing restore "$IFACE" >/dev/null 2>&1
+		logger -t wdtt-keepalive "bootstrapped selective routing (no routing.mode)"
+	fi
+	exit 0
+fi
 
 fixed=0
 

@@ -601,6 +601,15 @@ return view.extend({
 			enabled !== '' ? E('tr', {}, [E('td', {}, _('UCI enabled')), E('td', {}, enabled === '1' ? _('1 (вкл)') : _('0 (выкл)'))]) : '',
 			E('tr', {}, [E('td', {}, _('WireGuard')), E('td', {},
 				st.wg_applied ? _('Поднят') : (wgUp ? _('iface up') : _('Нет')))]),
+			(st.table100_ok === false || st.table100_ok === 0 || st.table100_ok === '0')
+				? E('tr', {}, [E('td', {}, _('Table 100')), E('td', { 'style': 'color:#c00' },
+					_('пусто — трафик не в туннель. Выполните: /usr/libexec/wdtt/routing reload wg-wdtt'))])
+				: (st.table100_ok === true || st.table100_ok === 1 || st.table100_ok === '1')
+					? E('tr', {}, [E('td', {}, _('Table 100')), E('td', {}, _('OK'))])
+					: '',
+			(st.nft_ok === false || st.nft_ok === 0 || st.nft_ok === '0')
+				? E('tr', {}, [E('td', {}, _('nft wdtt')), E('td', { 'style': 'color:#c00' }, _('нет таблицы'))])
+				: '',
 			E('tr', {}, [E('td', {}, _('Воркеры')), E('td', {}, String(st.workers || 0))]),
 			E('tr', {}, [E('td', {}, _('Uptime')), E('td', {}, (st.uptime_sec || 0) + ' s')]),
 			st.last_error ? E('tr', {}, [E('td', {}, _('Ошибка')), E('td', { 'style': 'color:#c00' }, st.last_error)]) : ''

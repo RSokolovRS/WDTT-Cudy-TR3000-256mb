@@ -25,6 +25,8 @@ wdtt_scp "$DIR/wdtt-client/files/wdtt-firewall-refresh" \
 	"/usr/libexec/wdtt/firewall-refresh"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-keepalive" \
 	"/usr/libexec/wdtt/keepalive"
+wdtt_scp "$DIR/wdtt-client/files/wdtt-routing" \
+	"/usr/libexec/wdtt/routing"
 wdtt_scp "$DIR/luci-app-wdtt/htdocs/luci-static/resources/view/wdtt/overview.js" \
 	"/www/luci-static/resources/view/wdtt/overview.js"
 wdtt_scp "$DIR/luci-app-wdtt/root/usr/libexec/rpcd/wdtt" \

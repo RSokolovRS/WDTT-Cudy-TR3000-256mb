@@ -184,9 +184,8 @@ func (d *Daemon) handleEvent(ev core.Event) {
 			} else {
 				var routingErr error
 				if d.cfg != nil && d.cfg.IsSelective() {
-					_ = routing.Stop()
-					// routing.Start сам вызывает firewall-refresh ПОСЛЕ nft table
-					// (иначе fw4 reload стирает table inet wdtt → 0 трафика)
+					// Не Stop() перед Start: после disconnect datapath уже снят,
+					// лишний stop+dnsmasq restart на reconnect часто оставляет table 100 пустой.
 					if err := routing.Start(d.wg.Iface(), d.cfg); err != nil {
 						log.Printf("[WDTT] selective routing failed: %v", err)
 						routingErr = err

@@ -15,7 +15,7 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.11.0"
+WDTT_INSTALL_VERSION="3.11.1"
 WDTT_ROUTING_VERSION="3.11.0"
 WDTT_BIN_TAG="v3.8.3"
 
