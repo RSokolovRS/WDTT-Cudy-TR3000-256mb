@@ -14,8 +14,21 @@ wdtt_write_stopped_status() {
 EOF
 }
 
+# На OpenWrt busybox pgrep -x часто врёт — проверяем несколькими способами
 wdtt_alive() {
-	pgrep -x wdttd >/dev/null 2>&1
+	local p
+	p="$(pidof wdttd 2>/dev/null)"
+	[ -n "$p" ] && return 0
+	pgrep -x wdttd >/dev/null 2>&1 && return 0
+	pgrep -f '/usr/sbin/wdttd' >/dev/null 2>&1 && return 0
+	pgrep wdttd >/dev/null 2>&1 && return 0
+	return 1
+}
+
+wdtt_iface_exists() {
+	local iface="$1"
+	[ -n "$iface" ] || return 1
+	ip link show "$iface" >/dev/null 2>&1
 }
 
 wdtt_connect() {
@@ -301,7 +314,7 @@ wdtt_apply_config() {
 		/usr/libexec/wdtt/routing stop 2>/dev/null || true
 	fi
 
-	if [ "$restart" -eq 1 ] && [ "$enabled" = "1" ] && pgrep -x wdttd >/dev/null 2>&1; then
+	if [ "$restart" -eq 1 ] && [ "$enabled" = "1" ] && wdtt_alive; then
 		/etc/init.d/wdtt restart 2>/dev/null || true
 	fi
 	return 0
@@ -350,21 +363,16 @@ case "$1" in
 				enabled="$(uci -q get wdtt.globals.enabled 2>/dev/null)"
 				enabled="${enabled:-0}"
 
-				if wdtt_alive; then
-					if [ -f "$STATUS_FILE" ]; then
-						json_load "$(cat "$STATUS_FILE")"
-					else
-						json_init
-						json_add_boolean running 1
-						json_add_string state "starting"
-						json_add_int rx_bytes 0
-						json_add_int tx_bytes 0
-						json_add_int workers 0
-						json_add_boolean wg_applied 0
-					fi
+				alive=0
+				wg_up=0
+				wdtt_alive && alive=1
+				wdtt_iface_exists "$iface" && wg_up=1
+
+				# Источник правды — status.json от демона. На чтении файл НЕ затираем
+				# (иначе гонка с wdttd → вечный "stopped" при живом туннеле).
+				if [ -f "$STATUS_FILE" ]; then
+					json_load "$(cat "$STATUS_FILE")"
 				else
-					# Демон мёртв — не показываем stale "connected" из status.json
-					wdtt_write_stopped_status
 					json_init
 					json_add_boolean running 0
 					json_add_string state "stopped"
@@ -374,12 +382,45 @@ case "$1" in
 					json_add_boolean wg_applied 0
 				fi
 
-				if ip link show "$iface" >/dev/null 2>&1; then
+				json_get_var st_state state
+				json_get_var st_running running
+
+				if [ "$alive" = "1" ] || [ "$wg_up" = "1" ]; then
+					# Туннель/демон живы — подправляем ответ, если файл ещё пустой/stopped
+					case "$st_state" in
+						stopped|"")
+							json_add_string state "connected"
+							;;
+					esac
+					if [ "$st_running" != "1" ] && [ "$st_running" != "true" ]; then
+						json_add_boolean running 1
+					fi
+					if [ "$wg_up" = "1" ]; then
+						json_add_boolean wg_applied 1
+					fi
+				else
+					# Нет процесса и нет iface — показываем stopped (файл не трогаем здесь;
+					# затираем только при явном disconnect/stop)
+					case "$st_state" in
+						connected|connecting|starting|captcha_required)
+							json_add_boolean running 0
+							json_add_string state "stopped"
+							json_add_boolean wg_applied 0
+							json_add_int workers 0
+							;;
+					esac
+					if [ "$st_running" = "1" ] || [ "$st_running" = "true" ]; then
+						json_add_boolean running 0
+						json_add_string state "stopped"
+						json_add_boolean wg_applied 0
+					fi
+				fi
+
+				if [ "$wg_up" = "1" ]; then
 					json_add_boolean wg_iface_up 1
 				else
 					json_add_boolean wg_iface_up 0
 				fi
-
 				json_add_string enabled "$enabled"
 				json_add_string package_version "$pkg_ver"
 				[ -n "$wdttd_ver" ] && json_add_string wdttd_version "$wdttd_ver"
