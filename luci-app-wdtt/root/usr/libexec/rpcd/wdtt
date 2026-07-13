@@ -214,11 +214,15 @@ wdtt_routing_info() {
 	wdtt_uci_parse_ok || uci_ok=0
 
 	state_file="$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
-	if [ "$mode" = "full" ]; then
-		state_file="full"
-	elif [ "$state_file" = "full" ] && [ "$mode" != "full" ]; then
-		state_file="stale-selective"
-	fi
+	case "$mode" in
+		full) state_file="full" ;;
+		external|podkop|tunnel|tunnel_only) state_file="external" ;;
+		*)
+			if [ "$state_file" = "full" ] || [ "$state_file" = "external" ]; then
+				state_file="stale-selective"
+			fi
+			;;
+	esac
 
 	json_init
 	json_add_string routing_mode "$mode"
@@ -285,6 +289,7 @@ wdtt_apply_rules() {
 	iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 	iface="${iface:-wg-wdtt}"
 	[ "$mode" = "full" ] && return 0
+	case "$mode" in external|podkop|tunnel|tunnel_only) return 0 ;; esac
 	if ip link show "$iface" >/dev/null 2>&1; then
 		if [ -x /usr/libexec/wdtt/datapath ]; then
 			/usr/libexec/wdtt/datapath ensure "$iface" 2>/dev/null || true

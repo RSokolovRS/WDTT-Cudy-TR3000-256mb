@@ -1,6 +1,6 @@
 #!/bin/sh
-# Единая точка datapath: selective И full без ручного танца.
-# WDTT_DATAPATH_VERSION=3.12.2
+# Единая точка datapath: selective | full | external (Podkop и др.).
+# WDTT_DATAPATH_VERSION=3.13.0
 #
 #   datapath ensure [iface]  — поднять/починить по UCI routing_mode
 #   datapath stop            — снять оба режима
@@ -25,6 +25,7 @@ uci_mode() {
 	[ "$(uci -q get wdtt.globals.full_tunnel 2>/dev/null)" = "1" ] && m="full"
 	case "$m" in
 		full) echo full ;;
+		external|podkop|tunnel|tunnel_only) echo external ;;
 		*) echo selective ;;
 	esac
 }
@@ -47,6 +48,16 @@ route_set_count() {
 full_ok() {
 	ip route show 0.0.0.0/1 2>/dev/null | grep -q "$IFACE" || return 1
 	ip route show 128.0.0.0/1 2>/dev/null | grep -q "$IFACE" || return 1
+	return 0
+}
+
+# external: туннель up + firewall; без WDTT-маршрутов (ими управляет Podkop/PBR).
+external_ok() {
+	iface_up || return 1
+	# не должно быть selective/full от WDTT
+	ip rule show 2>/dev/null | grep -q "fwmark $MARK" && return 1
+	ip route show 0.0.0.0/1 2>/dev/null | grep -q "$IFACE" && return 1
+	ip route show 128.0.0.0/1 2>/dev/null | grep -q "$IFACE" && return 1
 	return 0
 }
 
@@ -73,6 +84,16 @@ ensure_firewall() {
 seed_selective_ips() {
 	[ -x /usr/libexec/wdtt/routing ] || return 0
 	/usr/libexec/wdtt/routing seed "$IFACE" 2>/dev/null || true
+}
+
+strip_wdtt_routes() {
+	[ -x /usr/libexec/wdtt/routing ] && /usr/libexec/wdtt/routing stop 2>/dev/null || true
+	[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel stop 2>/dev/null || true
+	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
+	ip route flush table "$TABLE" 2>/dev/null || true
+	ip route del 0.0.0.0/1 dev "$IFACE" 2>/dev/null || true
+	ip route del 128.0.0.0/1 dev "$IFACE" 2>/dev/null || true
+	nft delete table inet wdtt 2>/dev/null || true
 }
 
 ensure_selective() {
@@ -170,6 +191,30 @@ ensure_full() {
 	return 1
 }
 
+ensure_external() {
+	if ! iface_up; then
+		msg "WAIT: $IFACE down — external deferred"
+		write_health external 0 0
+		return 1
+	fi
+
+	msg "APPLY: external (tunnel only) on $IFACE — Podkop/PBR manages routes"
+	strip_wdtt_routes
+	ensure_firewall
+
+	# После fw4 reload не восстанавливаем selective/full — только firewall.
+	if iface_up; then
+		echo "external" > "$STATE_DIR/routing.mode"
+		write_health external 1 0
+		msg "OK: external — $IFACE up, no WDTT routes (use Podkop → interface $IFACE)"
+		return 0
+	fi
+
+	write_health external 0 0
+	msg "FAIL: external — $IFACE missing after firewall"
+	return 1
+}
+
 do_ensure() {
 	local mode
 	mkdir -p "$STATE_DIR"
@@ -178,6 +223,7 @@ do_ensure() {
 
 	case "$mode" in
 		full) ensure_full ;;
+		external) ensure_external ;;
 		*) ensure_selective ;;
 	esac
 }
@@ -202,10 +248,7 @@ do_wait_ensure() {
 
 do_stop() {
 	msg "stop datapath"
-	[ -x /usr/libexec/wdtt/routing ] && /usr/libexec/wdtt/routing stop 2>/dev/null || true
-	[ -x /usr/libexec/wdtt/full-tunnel ] && /usr/libexec/wdtt/full-tunnel stop 2>/dev/null || true
-	ip rule del fwmark "$MARK" table "$TABLE" 2>/dev/null || true
-	ip route flush table "$TABLE" 2>/dev/null || true
+	strip_wdtt_routes
 	rm -f "$STATE_DIR/routing.mode" "$HEALTH"
 	msg "OK: datapath stopped"
 	return 0
@@ -228,8 +271,11 @@ do_status() {
 	echo "--- full ---"
 	echo "route_0=$(ip route show 0.0.0.0/1 2>/dev/null | head -1)"
 	echo "route_128=$(ip route show 128.0.0.0/1 2>/dev/null | head -1)"
+	echo "--- external ---"
+	echo "hint=Podkop/PBR → network interface $IFACE (route_allowed_ips off)"
 	case "$mode" in
 		full) full_ok && ok=1 ;;
+		external) external_ok && ok=1 ;;
 		*) selective_ok && ok=1 ;;
 	esac
 	echo "datapath_ok=$ok"

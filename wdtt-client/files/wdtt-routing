@@ -1,6 +1,6 @@
 #!/bin/sh
 # WDTT selective routing — OpenWrt 25 / fw4
-# WDTT_ROUTING_VERSION=3.12.2
+# WDTT_ROUTING_VERSION=3.13.0
 # dnsmasq nftset → nft sets → fwmark → ip rule table 100 → wg-wdtt
 
 . /lib/functions.sh

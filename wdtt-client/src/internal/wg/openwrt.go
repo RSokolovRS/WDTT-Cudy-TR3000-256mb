@@ -16,6 +16,7 @@ type RoutingMode string
 const (
 	ModeFull      RoutingMode = "full"
 	ModeSelective RoutingMode = "selective"
+	ModeExternal  RoutingMode = "external" // туннель без маршрутов WDTT
 )
 
 // vkExcludeCIDRs — подсети VK/TURN/DNS, которые должны идти мимо туннеля.
@@ -145,8 +146,9 @@ func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode,
 		}
 	}
 
-	// В режиме full — весь трафик через WG (как раньше).
-	// В selective — маршруты задаёт /usr/libexec/wdtt/routing (policy routing).
+	// full — весь трафик через WG.
+	// selective — /usr/libexec/wdtt/routing (policy routing).
+	// external — только iface; маршруты у Podkop/PBR (route_allowed_ips=0).
 	if mode == ModeFull {
 		if len(allowedIPs) == 0 {
 			allowedIPs = []string{"0.0.0.0/1", "128.0.0.0/1"}

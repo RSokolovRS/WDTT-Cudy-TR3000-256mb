@@ -12,7 +12,7 @@ const (
 	datapathScript = "/usr/libexec/wdtt/datapath"
 )
 
-// Ensure поднимает datapath по UCI (selective или full) — единая точка после WG up.
+// Ensure поднимает datapath по UCI (selective | full | external) — единая точка после WG up.
 func Ensure(iface string) error {
 	if iface == "" {
 		iface = "wg-wdtt"
@@ -42,7 +42,11 @@ func EnsureWithConfig(iface string, cfg *config.Settings) error {
 		}
 		return nil
 	}
-	if cfg != nil && !cfg.IsSelective() {
+	if cfg != nil && cfg.IsExternal() {
+		_ = Stop()
+		return RefreshFirewall(iface)
+	}
+	if cfg != nil && cfg.IsFull() {
 		_ = Stop()
 		if err := RefreshFirewall(iface); err != nil {
 			return err

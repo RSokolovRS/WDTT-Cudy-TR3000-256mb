@@ -15,8 +15,7 @@ config globals 'globals'
 	option obfs_mode 'audio'
 	option device_id ''
 	option iface 'wg-wdtt'
-	# selective = правила решают, что идёт в туннель; full = весь трафик через WDTT
-	# full = весь трафик роутера через WDTT
+	# selective = правила WDTT; full = весь трафик; external = только туннель (Podkop/PBR)
 	option routing_mode 'selective'
 	option uplink_iface 'auto'
 

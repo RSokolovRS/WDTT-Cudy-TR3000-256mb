@@ -342,9 +342,10 @@ return view.extend({
 		o.default = 'audio';
 
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
-			_('Полный — весь трафик через WDTT. Выборочный — только правила ниже. После смены режима: Save & Apply внизу страницы.'));
-		o.value('selective', _('Выборочный (правила)'));
+			_('Выборочный — правила WDTT. Полный — весь трафик. External — только туннель wg-wdtt; маршруты задаёт Podkop/PBR.'));
+		o.value('selective', _('Выборочный (правила WDTT)'));
 		o.value('full', _('Полный туннель'));
+		o.value('external', _('External (Podkop / PBR)'));
 		o.default = 'selective';
 
 		o = s.option(form.ListValue, 'uplink_iface', _('Интернет (uplink)'),
@@ -373,7 +374,7 @@ return view.extend({
 
 		/* --- Правила маршрутизации (только selective; туннель не перезапускается) --- */
 		s = m.section(form.TypedSection, 'rule', _('Правила маршрутизации'),
-			_('Определяют, какой трафик идёт через WDTT. Работает в режиме «Выборочная».'));
+			_('Только режим «Выборочный». В External правила не используются — настройте Podkop (interface wg-wdtt).'));
 		s.anonymous = false;
 		s.addremove = true;
 
@@ -505,7 +506,7 @@ return view.extend({
 			var rulesPayload = readDomainRulesFromPage();
 			var applyRulesP = Promise.resolve({});
 			var mode = uci.get('wdtt', 'globals', 'routing_mode') || 'selective';
-			if (mode !== 'full' && Object.keys(rulesPayload).some(function(sid) {
+			if (mode === 'selective' && Object.keys(rulesPayload).some(function(sid) {
 				return rulesPayload[sid].domain_list;
 			}))
 				applyRulesP = callApplyRules(rulesPayload).catch(function() { return {}; });
@@ -515,7 +516,7 @@ return view.extend({
 				return mapSave();
 			}).then(function() {
 				return callApplyConfig().then(function() {
-					if (mode !== 'full')
+					if (mode === 'selective')
 						return callApplyRules(rulesPayload).catch(function() { return {}; });
 					return {};
 				}).catch(function() { return {}; });
@@ -626,7 +627,9 @@ return view.extend({
 		info = info || {};
 		var lines = [];
 		var mode = info.routing_mode || 'selective';
-		var modeLabel = mode === 'full' ? _('Полный') : _('Выборочная');
+		var modeLabel = mode === 'full'
+			? _('Полный')
+			: (mode === 'external' ? _('External (Podkop)') : _('Выборочная'));
 		var rules = normalizeRulesArray(info.rules);
 		var hasEnabledRoute = false;
 		var hasDisabledRoute = false;
@@ -645,6 +648,13 @@ return view.extend({
 				lines.push(_('(!) Selective routing ещё активен: Save & Apply внизу, затем «Переподключить».'));
 			else if (info.state_file !== 'full')
 				lines.push(_('(!) Save & Apply внизу страницы, затем «Переподключить» для полного туннеля.'));
+			return lines.join('\n');
+		}
+		if (mode === 'external') {
+			lines.push(_('Туннель wg-wdtt без маршрутов WDTT.'));
+			lines.push(_('Podkop → VPN interface: wg-wdtt (Route Allowed IPs выкл.).'));
+			if (info.state_file && info.state_file !== 'external' && info.state_file !== 'missing')
+				lines.push(_('(!) Старый datapath ещё активен: Save & Apply, затем «Переподключить».'));
 			return lines.join('\n');
 		}
 

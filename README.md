@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.12.2 (рекомендуется — без кэша jsDelivr)
+### Рабочие ссылки v3.13.0 (рекомендуется — без кэша jsDelivr)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.12.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.13.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -291,6 +291,8 @@ sh <(uclient-fetch --header="Authorization: Bearer $GITHUB_TOKEN" -q -O - \
 
 Режим **полный туннель** — весь трафик через WDTT; секции `rule` не используются.
 
+Режим **external** (v3.13.0+) — WDTT только поднимает `wg-wdtt` + firewall/NAT; **что** идёт в туннель решает **Podkop** (или другой PBR). Правила WDTT не используются.
+
 ## Маршрутизация
 
 По умолчанию режим **selective** — в туннель идут только выбранные ресурсы:
@@ -301,6 +303,16 @@ sh <(uclient-fetch --header="Authorization: Bearer $GITHUB_TOKEN" -q -O - \
 4. **`source_ip`** в правиле — весь трафик выбранного устройства через WDTT
 
 Режим **full** — весь трафик роутера через WDTT.
+
+Режим **external** — туннель без маршрутов WDTT:
+
+```bash
+uci set wdtt.globals.routing_mode='external'
+uci commit wdtt
+# LuCI: Отключить → Подключить
+```
+
+Затем в **Podkop** → VPN interface: `wg-wdtt` (как обычный WireGuard: Route Allowed IPs **выкл.**).
 
 ```
 Приоритет: routing_excluded_ip > source_ip (full device) > domain/subnet lists
@@ -368,11 +380,12 @@ uci set wdtt.globals.enabled='1'
 uci set wdtt.globals.peer='203.0.113.10:56000'
 uci set wdtt.globals.password='your-password'
 uci set wdtt.globals.hashes='abc123'
-uci set wdtt.globals.routing_mode='selective'
+uci set wdtt.globals.routing_mode='external'   # или selective / full
 uci set wdtt.globals.uplink_iface='auto'
 uci set wdtt.globals.workers='12'
 uci set wdtt.globals.obfs_mode='audio'   # или video — только если VPS принимает PT 96
 
+# selective: домены через WDTT; external: домены в Podkop
 uci set wdtt.youtube=rule
 uci set wdtt.youtube.enabled='1'
 uci set wdtt.youtube.type='route'
@@ -409,7 +422,7 @@ wdttd
         └── ip rule → table 100 → wg-wdtt
 ```
 
-## Обфускация RTP (obfs_mode, v3.12.2+)
+## Обфускация RTP (obfs_mode, v3.13.0+)
 
 LuCI → **Обфускация RTP** / UCI `wdtt.globals.obfs_mode`:
 

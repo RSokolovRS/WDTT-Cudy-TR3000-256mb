@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.12.2"
-WDTT_ROUTING_VERSION="3.12.2"
-WDTT_BIN_TAG="v3.12.2"
+WDTT_INSTALL_VERSION="3.13.0"
+WDTT_ROUTING_VERSION="3.13.0"
+WDTT_BIN_TAG="v3.13.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -28,7 +28,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.12.2/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.13.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -427,6 +427,7 @@ install_hotplug_firewall_wdtt() {
 [ -f /var/run/wdtt/firewall-refresh.lock ] && exit 0
 routing_mode="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
 [ "$routing_mode" = "full" ] && exit 0
+case "$routing_mode" in external|podkop|tunnel|tunnel_only) exit 0 ;; esac
 iface="$(uci -q get wdtt.globals.iface 2>/dev/null)"; iface="${iface:-wg-wdtt}"
 /usr/libexec/wdtt/routing restore "$iface" 2>/dev/null || /usr/libexec/wdtt/routing reload "$iface" 2>/dev/null
 exit 0

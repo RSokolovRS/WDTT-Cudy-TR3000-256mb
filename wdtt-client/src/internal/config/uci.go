@@ -15,6 +15,8 @@ type RoutingMode string
 const (
 	RoutingFull      RoutingMode = "full"
 	RoutingSelective RoutingMode = "selective"
+	// RoutingExternal — только туннель wg-wdtt + firewall; маршруты — Podkop/PBR.
+	RoutingExternal RoutingMode = "external"
 )
 
 // Rule — секция правил маршрутизации (UCI rule).
@@ -103,18 +105,20 @@ func Load(path string) (*Settings, error) {
 		Rules:       rules,
 	}
 
-	// routing_mode: selective (правила) | full (весь трафик)
+	// routing_mode: selective | full | external (Podkop/PBR)
 	switch strings.ToLower(strings.TrimSpace(g["routing_mode"])) {
 	case "full":
 		s.RoutingMode = RoutingFull
+	case "external", "podkop", "tunnel", "tunnel_only":
+		s.RoutingMode = RoutingExternal
 	default:
 		s.RoutingMode = RoutingSelective
 	}
 
-	// legacy full_tunnel option
+	// legacy full_tunnel option (не трогает external)
 	if g["full_tunnel"] == "1" {
 		s.RoutingMode = RoutingFull
-	} else if g["full_tunnel"] == "0" {
+	} else if g["full_tunnel"] == "0" && s.RoutingMode != RoutingExternal {
 		s.RoutingMode = RoutingSelective
 	}
 
@@ -251,6 +255,14 @@ func (s *Settings) Validate() error {
 
 func (s *Settings) IsSelective() bool {
 	return s.RoutingMode == RoutingSelective
+}
+
+func (s *Settings) IsFull() bool {
+	return s.RoutingMode == RoutingFull
+}
+
+func (s *Settings) IsExternal() bool {
+	return s.RoutingMode == RoutingExternal
 }
 
 func normalizeHash(raw string) string {

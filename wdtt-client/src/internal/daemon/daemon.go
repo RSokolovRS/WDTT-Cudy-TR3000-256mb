@@ -79,10 +79,13 @@ func (d *Daemon) runWithConfig(ctx context.Context, cfg *config.Settings) error 
 
 	d.cfg = cfg
 	d.wg = wg.New(cfg.Iface)
-	if cfg.IsSelective() {
-		d.wg.SetMode(wg.ModeSelective)
-	} else {
+	switch {
+	case cfg.IsFull():
 		d.wg.SetMode(wg.ModeFull)
+	case cfg.IsExternal():
+		d.wg.SetMode(wg.ModeExternal)
+	default:
+		d.wg.SetMode(wg.ModeSelective)
 	}
 	d.status.SetRunning(true)
 
@@ -168,9 +171,14 @@ func (d *Daemon) handleEvent(ev core.Event) {
 	case core.EventEvent:
 		switch ev.Name {
 		case "wg_config":
-			mode := wg.ModeFull
-			if d.cfg != nil && d.cfg.IsSelective() {
-				mode = wg.ModeSelective
+			mode := wg.ModeSelective
+			if d.cfg != nil {
+				switch {
+				case d.cfg.IsFull():
+					mode = wg.ModeFull
+				case d.cfg.IsExternal():
+					mode = wg.ModeExternal
+				}
 			}
 			uplink := ""
 			peer := ""
@@ -183,7 +191,7 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				d.status.SetError(err)
 			} else {
 				var routingErr error
-				// Единый datapath: selective или full по UCI — без Stop→Start гонок
+				// Единый datapath: selective | full | external по UCI
 				if err := routing.EnsureWithConfig(d.wg.Iface(), d.cfg); err != nil {
 					log.Printf("[WDTT] datapath ensure failed: %v", err)
 					routingErr = err
