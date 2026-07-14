@@ -373,71 +373,73 @@ return view.extend({
 		o.default = 'wg-wdtt';
 		o.readonly = true;
 
-		/* --- Правила маршрутизации (только selective) --- */
-		s = m.section(form.TypedSection, 'rule', _('Правила маршрутизации'),
-			_('Только режим «Выборочный». С Podkop — домены в LuCI Podkop, не здесь.'));
-		s.anonymous = false;
-		s.addremove = true;
-		s.depends('globals', 'routing_mode', 'selective');
+		/* --- Правила маршрутизации (только selective; TypedSection.depends в LuCI JS нет) --- */
+		var routingMode = uci.get('wdtt', 'globals', 'routing_mode') || 'external';
+		if (routingMode === 'selective') {
+			s = m.section(form.TypedSection, 'rule', _('Правила маршрутизации'),
+				_('Только режим «Выборочный». С Podkop — домены в LuCI Podkop, не здесь.'));
+			s.anonymous = false;
+			s.addremove = true;
 
-		o = s.option(form.Flag, 'enabled', _('Включено'));
-		o.default = '1';
+			o = s.option(form.Flag, 'enabled', _('Включено'));
+			o.default = '1';
 
-		o = s.option(form.ListValue, 'type', _('Тип'));
-		o.value('route', _('В туннель (route)'));
-		o.value('exclusion', _('Напрямую (exclusion)'));
-		o.default = 'route';
+			o = s.option(form.ListValue, 'type', _('Тип'));
+			o.value('route', _('В туннель (route)'));
+			o.value('exclusion', _('Напрямую (exclusion)'));
+			o.default = 'route';
 
-		o = s.option(form.TextValue, 'domain_list', _('Домены'),
-			_('Через запятую или с новой строки. youtube.com сам подтягивает CDN (googlevideo, ytimg, …). Клиенты должны использовать DNS роутера (не DoH).'));
-		o.rows = 4;
-		o.placeholder = 'youtube.com, 2ip.ru';
-		o.rmempty = true;
-		o.load = function(section_id) {
-			var v = uci.get('wdtt', section_id, 'domain_list');
-			if (v == null)
-				return '';
-			if (Array.isArray(v))
-				v = v.join(',');
-			return String(v).replace(/,/g, '\n');
-		};
-		o.write = function(section_id, formvalue) {
-			var normalized = normalizeDomainList(formvalue);
-			if (normalized)
-				uci.set('wdtt', section_id, 'domain_list', normalized);
-		};
-		o.remove = function(section_id) {
-			uci.unset('wdtt', section_id, 'domain_list');
-		};
+			o = s.option(form.TextValue, 'domain_list', _('Домены'),
+				_('Через запятую или с новой строки. youtube.com сам подтягивает CDN (googlevideo, ytimg, …). Клиенты должны использовать DNS роутера (не DoH).'));
+			o.rows = 4;
+			o.placeholder = 'youtube.com, 2ip.ru';
+			o.rmempty = true;
+			o.load = function(section_id) {
+				var v = uci.get('wdtt', section_id, 'domain_list');
+				if (v == null)
+					return '';
+				if (Array.isArray(v))
+					v = v.join(',');
+				return String(v).replace(/,/g, '\n');
+			};
+			o.write = function(section_id, formvalue) {
+				var normalized = normalizeDomainList(formvalue);
+				if (normalized)
+					uci.set('wdtt', section_id, 'domain_list', normalized);
+			};
+			o.remove = function(section_id) {
+				uci.unset('wdtt', section_id, 'domain_list');
+			};
 
-		o = s.option(form.DynamicList, 'subnet', _('Подсети'), _('CIDR, например 203.0.113.0/24'));
-		o.datatype = 'cidr';
-		o.placeholder = '203.0.113.0/24';
-		o.rmempty = true;
+			o = s.option(form.DynamicList, 'subnet', _('Подсети'), _('CIDR, например 203.0.113.0/24'));
+			o.datatype = 'cidr';
+			o.placeholder = '203.0.113.0/24';
+			o.rmempty = true;
 
-		o = s.option(form.DynamicList, 'source_ip', _('IP устройства (полная маршрутизация)'),
-			_('Весь трафик этого устройства через WDTT, независимо от доменов в правиле.'));
-		o.datatype = 'ipaddr';
-		o.placeholder = '192.168.1.50';
+			o = s.option(form.DynamicList, 'source_ip', _('IP устройства (полная маршрутизация)'),
+				_('Весь трафик этого устройства через WDTT, независимо от доменов в правиле.'));
+			o.datatype = 'ipaddr';
+			o.placeholder = '192.168.1.50';
 
-		o = s.option(form.Value, 'list_url', _('URL списка доменов'),
-			_('Файл: один домен на строку. Загружается при подключении.'));
-		o.placeholder = 'https://example.com/list.txt';
-		o.rmempty = true;
+			o = s.option(form.Value, 'list_url', _('URL списка доменов'),
+				_('Файл: один домен на строку. Загружается при подключении.'));
+			o.placeholder = 'https://example.com/list.txt';
+			o.rmempty = true;
 
-		s = m.section(form.NamedSection, 'globals', 'globals', '');
-		s.render = L.bind(function() {
-			return E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'cbi-page-actions' }, [
-					E('button', {
-						'class': 'btn cbi-button cbi-button-apply important',
-						'click': ui.createHandlerFn(self, self.handleApplyRules)
-					}, _('Принять изменения'))
-				]),
-				E('p', { 'class': 'hint' },
-					_('Сохраняет правила в UCI и перезагружает маршрутизацию без отключения туннеля.'))
-			]);
-		}, s);
+			s = m.section(form.NamedSection, 'globals', 'globals', '');
+			s.render = L.bind(function() {
+				return E('div', { 'class': 'cbi-section' }, [
+					E('div', { 'class': 'cbi-page-actions' }, [
+						E('button', {
+							'class': 'btn cbi-button cbi-button-apply important',
+							'click': ui.createHandlerFn(self, self.handleApplyRules)
+						}, _('Принять изменения'))
+					]),
+					E('p', { 'class': 'hint' },
+						_('Сохраняет правила в UCI и перезагружает маршрутизацию без отключения туннеля.'))
+				]);
+			}, s);
+		}
 
 		/* --- Статус --- */
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Статус'));
