@@ -4,7 +4,14 @@
 IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 IFACE="${IFACE:-wg-wdtt}"
 ROUTING_MODE="$(uci -q get wdtt.globals.routing_mode 2>/dev/null)"
-ROUTING_MODE="${ROUTING_MODE:-selective}"
+ROUTING_MODE="${ROUTING_MODE:-external}"
+
+is_external_mode() {
+	case "$ROUTING_MODE" in
+	external|podkop|tunnel|tunnel_only) return 0 ;;
+	esac
+	return 1
+}
 
 echo "=== WDTT doctor ==="
 echo "routing_mode=${ROUTING_MODE}"
@@ -46,8 +53,8 @@ else
 fi
 
 echo "--- dnsmasq ---"
-if [ "$ROUTING_MODE" = "full" ]; then
-	echo "SKIP: dnsmasq nftset не нужен в режиме full"
+if [ "$ROUTING_MODE" = "full" ] || is_external_mode; then
+	echo "SKIP: dnsmasq nftset не нужен (режим ${ROUTING_MODE})"
 else
 	if command -v dnsmasq >/dev/null 2>&1 && dnsmasq --version 2>/dev/null | tr ' ,' '\n\n' | grep -qx 'nftset'; then
 		echo "OK: dnsmasq nftset"
@@ -93,7 +100,9 @@ else
 fi
 
 echo "--- nft selective table ---"
-if [ "$ROUTING_MODE" != "full" ]; then
+if is_external_mode; then
+	echo "SKIP: selective nft — маршруты у Podkop (sing-box)"
+elif [ "$ROUTING_MODE" != "full" ]; then
 	if nft list table inet wdtt >/dev/null 2>&1; then
 		echo "OK: table inet wdtt"
 		n=$(nft list set inet wdtt wdtt_route 2>/dev/null | grep -cE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+') || n=0
@@ -196,13 +205,20 @@ if [ "$ROUTING_MODE" = "full" ]; then
 	else
 		echo "WARN: ip_forward=0 — sysctl -w net.ipv4.ip_forward=1"
 	fi
+elif is_external_mode; then
+	echo "--- external (Podkop) ---"
+	[ -x /usr/libexec/wdtt/datapath ] && /usr/libexec/wdtt/datapath ensure "$IFACE" 2>/dev/null || true
 else
 	echo "--- reload routing (selective) ---"
 	/usr/libexec/wdtt/routing reload "$IFACE" 2>&1 || true
 fi
 
 echo ""
-/usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
+if is_external_mode; then
+	[ -x /usr/libexec/wdtt/podkop ] && /usr/libexec/wdtt/podkop status 2>/dev/null || echo "podkop status: script missing"
+elif ! [ "$ROUTING_MODE" = "full" ]; then
+	/usr/libexec/wdtt/routing status 2>/dev/null || echo "routing status failed"
+fi
 
 echo ""
 has_wdtt_domains() {
@@ -222,6 +238,15 @@ if [ "$ROUTING_MODE" = "full" ]; then
 	else
 		echo "WARN: state_file=${state}"
 	fi
+elif is_external_mode; then
+	echo "=== podkop check ==="
+	state="$(tr -d '\r\n' < /var/run/wdtt/routing.mode 2>/dev/null || echo missing)"
+	if [ "$state" = "external" ]; then
+		echo "OK: state_file=external (WDTT туннель без маршрутов)"
+	else
+		echo "WARN: state_file=${state} — LuCI Save & Apply → Переподключить"
+	fi
+	echo "Правила WDTT не используются — списки доменов настраивайте в Podkop"
 else
 	echo "=== rule type check ==="
 	rules_ok=0
@@ -272,6 +297,11 @@ if [ "$ROUTING_MODE" = "full" ]; then
 	echo "2) Переподключить (Отключить → Подключить)"
 	echo "3) doctor: state_file=full, default route через wg-wdtt"
 	echo "4) curl -4 https://2ip.io с LAN-клиента"
+elif is_external_mode; then
+	echo "1) LuCI WDTT: Режим «Podkop» → Подключить"
+	echo "2) LuCI Podkop: section VPN → interface=$IFACE"
+	echo "3) /usr/libexec/wdtt/podkop status — OK"
+	echo "4) curl -4 https://2ip.io с LAN-клиента (DNS=роутер)"
 else
 	echo "1) LuCI: Правила → Домены, Включено → «Принять изменения»"
 	echo "2) Подключить → connected"

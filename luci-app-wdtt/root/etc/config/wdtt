@@ -16,7 +16,7 @@ config globals 'globals'
 	option device_id ''
 	option iface 'wg-wdtt'
 	# selective = правила WDTT; full = весь трафик; external = только туннель (Podkop/PBR)
-	option routing_mode 'selective'
+	option routing_mode 'external'
 	option uplink_iface 'auto'
 
 # Пустое правило — домены в LuCI → «Домены» (option domain_list, не list domain)

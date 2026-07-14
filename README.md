@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.13.0 (рекомендуется — без кэша jsDelivr)
+### Рабочие ссылки v3.13.1 (рекомендуется — Podkop + WDTT)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.13.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.13.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -291,7 +291,13 @@ sh <(uclient-fetch --header="Authorization: Bearer $GITHUB_TOKEN" -q -O - \
 
 Режим **полный туннель** — весь трафик через WDTT; секции `rule` не используются.
 
-Режим **external** (v3.13.0+) — WDTT только поднимает `wg-wdtt` + firewall/NAT; **что** идёт в туннель решает **Podkop** (или другой PBR). Правила WDTT не используются.
+Режим **external / Podkop** (v3.13.1+, **по умолчанию**) — WDTT только поднимает `wg-wdtt` + firewall/NAT; **что** идёт в туннель решает **Podkop** (sing-box). Правила WDTT не используются.
+
+```bash
+# Проверка связки WDTT + Podkop
+/usr/libexec/wdtt/podkop status
+/usr/libexec/wdtt/doctor
+```
 
 ## Маршрутизация
 
@@ -422,7 +428,7 @@ wdttd
         └── ip rule → table 100 → wg-wdtt
 ```
 
-## Обфускация RTP (obfs_mode, v3.13.0+)
+## Обфускация RTP (obfs_mode, v3.13.1+)
 
 LuCI → **Обфускация RTP** / UCI `wdtt.globals.obfs_mode`:
 

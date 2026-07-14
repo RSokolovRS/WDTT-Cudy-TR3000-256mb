@@ -1,6 +1,6 @@
 #!/bin/sh
 # Единая точка datapath: selective | full | external (Podkop и др.).
-# WDTT_DATAPATH_VERSION=3.13.0
+# WDTT_DATAPATH_VERSION=3.13.1
 #
 #   datapath ensure [iface]  — поднять/починить по UCI routing_mode
 #   datapath stop            — снять оба режима
@@ -206,7 +206,7 @@ ensure_external() {
 	if iface_up; then
 		echo "external" > "$STATE_DIR/routing.mode"
 		write_health external 1 0
-		msg "OK: external — $IFACE up, no WDTT routes (use Podkop → interface $IFACE)"
+		msg "OK: external — $IFACE up, no WDTT routes (Podkop/sing-box → interface $IFACE or wdtt)"
 		return 0
 	fi
 
@@ -272,7 +272,7 @@ do_status() {
 	echo "route_0=$(ip route show 0.0.0.0/1 2>/dev/null | head -1)"
 	echo "route_128=$(ip route show 128.0.0.0/1 2>/dev/null | head -1)"
 	echo "--- external ---"
-	echo "hint=Podkop/PBR → network interface $IFACE (route_allowed_ips off)"
+	echo "hint=Podkop: connection_type=vpn, interface=$IFACE (или wdtt)"
 	case "$mode" in
 		full) full_ok && ok=1 ;;
 		external) external_ok && ok=1 ;;

@@ -7,7 +7,7 @@ set -e
 
 ROUTER="${1:-root@192.168.10.1}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="3.13.0"
+VERSION="3.13.1"
 
 wdtt_scp() {
 	local src="$1" dest="$2"
@@ -43,6 +43,8 @@ wdtt_scp "$DIR/wdtt-client/files/wdtt-set-domains" \
 	"/usr/libexec/wdtt/set-domains"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-doctor" \
 	"/usr/libexec/wdtt/doctor"
+wdtt_scp "$DIR/wdtt-client/files/wdtt-podkop" \
+	"/usr/libexec/wdtt/podkop"
 wdtt_scp "$DIR/wdtt-client/files/wdtt-full-tunnel" \
 	"/usr/libexec/wdtt/full-tunnel"
 wdtt_scp "$DIR/luci-app-wdtt/root/etc/firewall.wdtt" \
@@ -64,5 +66,5 @@ ssh "$ROUTER" "chmod 755 /usr/libexec/rpcd/wdtt /usr/libexec/wdtt/* /etc/firewal
 
 echo "=== OK. В браузере: Ctrl+F5 на странице WDTT ==="
 echo "На роутере:"
-echo "  /usr/libexec/wdtt/datapath status"
+echo "  /usr/libexec/wdtt/podkop status"
 echo "  /usr/libexec/wdtt/doctor"

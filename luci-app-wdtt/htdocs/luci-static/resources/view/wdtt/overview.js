@@ -342,11 +342,11 @@ return view.extend({
 		o.default = 'audio';
 
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
-			_('Выборочный — правила WDTT. Полный — весь трафик. External — только туннель wg-wdtt; маршруты задаёт Podkop/PBR.'));
+			_('Podkop — WDTT только поднимает wg-wdtt, маршруты задаёт Podkop (sing-box). Выборочный — правила WDTT. Полный — весь трафик через WDTT.'));
+		o.value('external', _('Podkop (sing-box) — рекомендуется'));
 		o.value('selective', _('Выборочный (правила WDTT)'));
 		o.value('full', _('Полный туннель'));
-		o.value('external', _('External (Podkop / PBR)'));
-		o.default = 'selective';
+		o.default = 'external';
 
 		o = s.option(form.ListValue, 'uplink_iface', _('Интернет (uplink)'),
 			_('Физический канал: VK/TURN и пакеты к VPS (peer). В режиме «Полный» выход в интернет — через туннель на VPS, не напрямую в LTE/WAN.'));
@@ -367,16 +367,18 @@ return view.extend({
 			_('Устройства, которые всегда идут напрямую (приоритет выше правил).'));
 		o.datatype = 'ipaddr';
 		o.placeholder = '192.168.1.100';
+		o.depends('routing_mode', 'selective');
 
 		o = s.option(form.Value, 'iface', _('Интерфейс WireGuard'));
 		o.default = 'wg-wdtt';
 		o.readonly = true;
 
-		/* --- Правила маршрутизации (только selective; туннель не перезапускается) --- */
+		/* --- Правила маршрутизации (только selective) --- */
 		s = m.section(form.TypedSection, 'rule', _('Правила маршрутизации'),
-			_('Только режим «Выборочный». В External правила не используются — настройте Podkop (interface wg-wdtt).'));
+			_('Только режим «Выборочный». С Podkop — домены в LuCI Podkop, не здесь.'));
 		s.anonymous = false;
 		s.addremove = true;
+		s.depends('globals', 'routing_mode', 'selective');
 
 		o = s.option(form.Flag, 'enabled', _('Включено'));
 		o.default = '1';
@@ -629,7 +631,7 @@ return view.extend({
 		var mode = info.routing_mode || 'selective';
 		var modeLabel = mode === 'full'
 			? _('Полный')
-			: (mode === 'external' ? _('External (Podkop)') : _('Выборочная'));
+			: (mode === 'external' ? _('Podkop') : _('Выборочная'));
 		var rules = normalizeRulesArray(info.rules);
 		var hasEnabledRoute = false;
 		var hasDisabledRoute = false;
@@ -651,10 +653,12 @@ return view.extend({
 			return lines.join('\n');
 		}
 		if (mode === 'external') {
-			lines.push(_('Туннель wg-wdtt без маршрутов WDTT.'));
-			lines.push(_('Podkop → VPN interface: wg-wdtt (Route Allowed IPs выкл.).'));
+			lines.push(_('WDTT: туннель wg-wdtt (маршруты — Podkop/sing-box).'));
+			lines.push(_('Podkop → section → VPN → interface: wg-wdtt'));
+			lines.push(_('Списки доменов — только в Podkop, не в WDTT.'));
+			lines.push(_('Проверка: ssh → /usr/libexec/wdtt/podkop status'));
 			if (info.state_file && info.state_file !== 'external' && info.state_file !== 'missing')
-				lines.push(_('(!) Старый datapath ещё активен: Save & Apply, затем «Переподключить».'));
+				lines.push(_('(!) Старый datapath: Save & Apply → «Переподключить».'));
 			return lines.join('\n');
 		}
 

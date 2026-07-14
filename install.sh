@@ -15,8 +15,8 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.13.0"
-WDTT_ROUTING_VERSION="3.13.0"
+WDTT_INSTALL_VERSION="3.13.1"
+WDTT_ROUTING_VERSION="3.13.1"
 WDTT_BIN_TAG="v3.13.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
@@ -486,7 +486,8 @@ install_wdtt_helpers() {
 		"domain-lib.sh:wdtt-client/files/wdtt-domain-lib.sh" \
 		"firewall-refresh:wdtt-client/files/wdtt-firewall-refresh" \
 		"keepalive:wdtt-client/files/wdtt-keepalive" \
-		"datapath:wdtt-client/files/wdtt-datapath"
+		"datapath:wdtt-client/files/wdtt-datapath" \
+		"podkop:wdtt-client/files/wdtt-podkop"
 	do
 		dest="/usr/libexec/wdtt/${f%%:*}"
 		src="${f#*:}"
@@ -767,7 +768,7 @@ restore_wdtt_secrets() {
 apply_clean_routing_defaults() {
 	local section
 
-	uci -q set wdtt.globals.routing_mode='selective'
+	uci -q set wdtt.globals.routing_mode='external'
 	uci -q set wdtt.globals.captcha_mode='wv'
 	uci -q set wdtt.globals.vk_auth_mode='vkcalls'
 	uci -q set wdtt.globals.obfs_mode='audio'
@@ -781,7 +782,7 @@ apply_clean_routing_defaults() {
 		uci -q delete "wdtt.${section}.domains" 2>/dev/null
 	done
 	uci -q commit wdtt 2>/dev/null
-	msg "routing: vk_auth_mode=vkcalls, captcha_mode=wv (domain_list сохранены при --clean)"
+	msg "routing: vk_auth_mode=vkcalls, captcha_mode=wv, routing_mode=external (Podkop)"
 }
 
 uninstall_wdtt() {
