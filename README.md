@@ -8,7 +8,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 | Назначение | URL |
 |------------|-----|
-| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/install.sh` |
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh` |
 | routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/wdtt-client/files/wdtt-routing` |
 | firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/wdtt-client/files/wdtt-firewall-refresh` |
 | push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
@@ -17,7 +17,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -48,7 +48,7 @@ apk del wget-nossl
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -64,7 +64,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
 
@@ -72,7 +72,7 @@ sh /tmp/wdtt-install.sh --clean
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
 sh /tmp/wdtt-install.sh --uninstall
 ```
 
@@ -197,7 +197,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
