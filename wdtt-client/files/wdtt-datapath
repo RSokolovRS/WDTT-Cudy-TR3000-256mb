@@ -1,6 +1,6 @@
 #!/bin/sh
 # Единая точка datapath: selective | full | external (Podkop и др.).
-# WDTT_DATAPATH_VERSION=3.13.1
+# WDTT_DATAPATH_VERSION=3.13.2
 #
 #   datapath ensure [iface]  — поднять/починить по UCI routing_mode
 #   datapath stop            — снять оба режима

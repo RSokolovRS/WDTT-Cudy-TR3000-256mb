@@ -23,13 +23,11 @@ else
 fi
 
 echo "--- routing script ---"
-if grep -q 'parse_list_domain_line' /usr/libexec/wdtt/routing 2>/dev/null \
-	&& grep -q 'WDTT_ROUTING_VERSION=3.7' /usr/libexec/wdtt/routing 2>/dev/null \
-	&& ! grep -q '|| echo 0)"' /usr/libexec/wdtt/routing 2>/dev/null \
-	&& grep -q 'return 0' /usr/libexec/wdtt/routing 2>/dev/null; then
-	echo "OK: routing script"
+rv="$(grep -m1 'WDTT_ROUTING_VERSION=' /usr/libexec/wdtt/routing 2>/dev/null | sed 's/.*WDTT_ROUTING_VERSION=//')"
+if [ -n "$rv" ] && grep -q 'parse_list_domain_line' /usr/libexec/wdtt/routing 2>/dev/null; then
+	echo "OK: routing script ($rv)"
 else
-	echo "FAIL: routing устарел (нужен v3.7.2+) — sh /tmp/wdtt-install.sh"
+	echo "FAIL: routing устарел/отсутствует — sh /tmp/wdtt-install.sh"
 fi
 
 echo "--- uci ---"
