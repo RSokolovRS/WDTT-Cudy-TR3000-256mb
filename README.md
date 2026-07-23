@@ -8,7 +8,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 | Назначение | URL |
 |------------|-----|
-| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@XXXXXXX/install.sh` |
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@d033468/install.sh` |
 | routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6cb9748/wdtt-client/files/wdtt-routing` |
 | firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6cb9748/wdtt-client/files/wdtt-firewall-refresh` |
 | push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
@@ -17,7 +17,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@XXXXXXX/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@d033468/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
