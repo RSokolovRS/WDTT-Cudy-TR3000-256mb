@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — domain-save fix v3.8.5 */
+/* WDTT overview.js — import URI v3.15.0 */
 'require view';
 'require ui';
 'require dom';
@@ -50,6 +50,146 @@ var callRoutingInfo = rpc.declare({
 	object: 'wdtt',
 	method: 'routing_info'
 });
+
+function decodeURIComponentSafe(s) {
+	try {
+		return decodeURIComponent(String(s || '').replace(/\+/g, ' '));
+	} catch (e) {
+		return String(s || '');
+	}
+}
+
+function parseQueryString(qs) {
+	var out = {};
+	String(qs || '').split('&').forEach(function(pair) {
+		if (!pair)
+			return;
+		var i = pair.indexOf('=');
+		var k = i < 0 ? pair : pair.slice(0, i);
+		var v = i < 0 ? '' : pair.slice(i + 1);
+		out[decodeURIComponentSafe(k)] = decodeURIComponentSafe(v);
+	});
+	return out;
+}
+
+function tryDecodeBase64JSON(raw) {
+	try {
+		var bin = atob(String(raw || '').replace(/\s+/g, ''));
+		var s = decodeURIComponent(Array.prototype.map.call(bin, function(c) {
+			return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+		}).join(''));
+		return s.trim();
+	} catch (e) {
+		return '';
+	}
+}
+
+/**
+ * Импорт профиля из wdtt://, qwdtt://config?... или JSON (.qwdtt).
+ * Возвращает { peer, password, hashes, workers, listen, name }.
+ */
+function parseWdttImport(raw) {
+	var trimmed = String(raw || '').trim();
+	if (!trimmed)
+		throw new Error(_('Вставьте ссылку wdtt:// или qwdtt://'));
+
+	if (/^wdtt:\/\//i.test(trimmed)) {
+		/* wdtt://IP:dtls:wg:local:password:vk_hash  (hash may contain ':') */
+		var body = trimmed.replace(/^wdtt:\/\//i, '');
+		var parts = body.split(':');
+		if (parts.length < 6)
+			throw new Error(_('Неверный формат wdtt:// — нужно IP:dtls:wg:local:пароль:хеш'));
+		var ip = parts[0];
+		var dtls = parts[1];
+		var localPort = parseInt(parts[3], 10) || 9000;
+		var pass = parts[4];
+		var hash = parts.slice(5).join(':');
+		if (!ip || !dtls || !pass || !hash)
+			throw new Error(_('В wdtt:// не хватает peer / пароля / хеша'));
+		return {
+			name: 'WDTT ' + ip,
+			peer: ip + ':' + dtls,
+			password: pass,
+			hashes: hash,
+			workers: '16',
+			listen: '127.0.0.1:' + localPort
+		};
+	}
+
+	if (/^qwdtt:\/\/config/i.test(trimmed) || /^qwdtt:config/i.test(trimmed)) {
+		var norm = trimmed.replace(/^qwdtt:config/i, 'qwdtt://config');
+		var qidx = norm.indexOf('?');
+		if (qidx < 0)
+			throw new Error(_('Неверный формат qwdtt:// — нет параметров'));
+		var q = parseQueryString(norm.slice(qidx + 1));
+		var peerRaw = q.peer || '';
+		var dtlsPort = q.dtls_port || q.server_port || '';
+		var peer = peerRaw;
+		if (peerRaw && dtlsPort && peerRaw.indexOf(':') < 0)
+			peer = peerRaw + ':' + dtlsPort;
+		var hashes = q.hashes || q.vkHashes || '';
+		var pass = q.pass || q.password || '';
+		var workers = parseInt(q.workers || q.workersPerHash || '16', 10) || 16;
+		var port = parseInt(q.port || q.listenPort || '9000', 10) || 9000;
+		if (!peer || !pass || !hashes)
+			throw new Error(_('В qwdtt:// нужны peer, pass и hashes'));
+		return {
+			name: q.name || 'qWDTT',
+			peer: peer,
+			password: pass,
+			hashes: hashes,
+			workers: String(workers),
+			listen: '127.0.0.1:' + port
+		};
+	}
+
+	var jsonStr = trimmed;
+	if (jsonStr.charAt(0) !== '{') {
+		var decoded = tryDecodeBase64JSON(trimmed);
+		if (decoded.charAt(0) === '{')
+			jsonStr = decoded;
+	}
+	if (jsonStr.charAt(0) === '{') {
+		var obj;
+		try {
+			obj = JSON.parse(jsonStr);
+		} catch (e) {
+			throw new Error(_('Неверный JSON профиля'));
+		}
+		var jPeer = obj.peer || '';
+		var jPass = obj.password || obj.pass || '';
+		var jHashes = obj.hashes || obj.vkHashes || '';
+		var jWorkers = parseInt(obj.workers || obj.workersPerHash || 16, 10) || 16;
+		var jPort = parseInt(obj.port || obj.listenPort || 9000, 10) || 9000;
+		if (!jPeer || !jPass || !jHashes)
+			throw new Error(_('В JSON нужны peer, password/pass и hashes'));
+		return {
+			name: obj.name || 'JSON',
+			peer: jPeer,
+			password: jPass,
+			hashes: jHashes,
+			workers: String(jWorkers),
+			listen: '127.0.0.1:' + jPort
+		};
+	}
+
+	throw new Error(_('Неизвестный формат. Ожидается wdtt://, qwdtt://config?... или JSON'));
+}
+
+function syncGlobalsFormField(option, value) {
+	uci.set('wdtt', 'globals', option, value);
+	var nodes = document.querySelectorAll(
+		'[data-widget-id="wdtt.globals.' + option + '"] input, ' +
+		'[data-widget-id="wdtt.globals.' + option + '"] textarea, ' +
+		'input[name="cbid.wdtt.globals.' + option + '"], ' +
+		'textarea[name="cbid.wdtt.globals.' + option + '"]'
+	);
+	for (var i = 0; i < nodes.length; i++) {
+		nodes[i].value = value;
+		if (typeof nodes[i].dispatchEvent === 'function')
+			nodes[i].dispatchEvent(new Event('change', { bubbles: true }));
+	}
+}
 
 function annotateDomainFields() {
 	document.querySelectorAll('textarea').forEach(function(ta) {
@@ -290,6 +430,27 @@ return view.extend({
 		self._lastRulesText = '';
 
 		m = new form.Map('wdtt', wdttPageTitle(status), wdttPageDescription(status));
+
+		/* --- Импорт wdtt:// / qwdtt:// --- */
+		s = m.section(form.NamedSection, 'globals', 'globals', _('Импорт профиля'));
+		s.render = L.bind(function() {
+			return E('div', { 'class': 'cbi-section' }, [
+				E('p', { 'class': 'hint' },
+					_('Вставьте ссылку из Telegram-бота / Android (wdtt:// или qwdtt://) — заполнятся peer, пароль, хеши и потоки.')),
+				E('textarea', {
+					'id': 'wdtt-import-uri',
+					'rows': 3,
+					'style': 'width:100%;font-family:monospace;font-size:12px;',
+					'placeholder': 'wdtt://203.0.113.10:56000:56001:9000:пароль:хеш\nили qwdtt://config?peer=...&pass=...&hashes=...'
+				}),
+				E('div', { 'class': 'cbi-page-actions', 'style': 'margin-top:8px' }, [
+					E('button', {
+						'class': 'btn cbi-button cbi-button-apply important',
+						'click': ui.createHandlerFn(self, self.handleImportURI)
+					}, _('Импортировать'))
+				])
+			]);
+		}, s);
 
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Настройки туннеля'));
 
@@ -853,6 +1014,41 @@ return view.extend({
 				_('Uplink:') + ' ' + iface + '. ' + _('Переподключите туннель, если уже подключён.')), 4000, 'success');
 			self._lastRulesText = '';
 			return Promise.all([ self.pollStatus(), self.refreshRulesLog() ]);
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
+	},
+
+	handleImportURI: function() {
+		var self = this;
+		var ta = document.getElementById('wdtt-import-uri');
+		var raw = ta ? ta.value : '';
+		var cfg;
+		try {
+			cfg = parseWdttImport(raw);
+		} catch (e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+			return Promise.resolve();
+		}
+
+		syncGlobalsFormField('peer', cfg.peer);
+		syncGlobalsFormField('password', cfg.password);
+		syncGlobalsFormField('hashes', cfg.hashes);
+		syncGlobalsFormField('workers', cfg.workers);
+		if (cfg.listen)
+			uci.set('wdtt', 'globals', 'listen', cfg.listen);
+
+		return uci.save().then(function() {
+			return callApplyConfig();
+		}).then(function(res) {
+			if (res && res.error)
+				throw new Error(res.error);
+			if (ta)
+				ta.value = '';
+			ui.addTimeLimitedNotification(null, E('p', {},
+				_('Импортировано:') + ' ' + (cfg.name || cfg.peer) + '. ' +
+				_('Проверьте поля и нажмите «Подключить».')), 6000, 'success');
+			return self.pollStatus();
 		}).catch(function(e) {
 			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
 		});
