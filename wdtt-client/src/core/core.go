@@ -24,6 +24,7 @@ type Config struct {
 	VKAuthMode  string   // vkcalls | legacy
 	ObfsMode    string   // audio | video
 	MTU         int      // 0 = default 1240
+	GoDNS       string   // DNS для VK API: yandex|google|cloudflare|doh-yandex|doh-google|doh-cloudflare|custom:IP|doh:URL
 }
 
 // EventType — тип события от ядра.
@@ -124,7 +125,7 @@ func New(cfg Config) *Core {
 
 // Start запускает ядро. Возвращает канал событий (закрывается при завершении).
 func (c *Core) Start() (<-chan Event, error) {
-	setupGlobalResolver()
+	setupGlobalResolver(c.cfg.GoDNS)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
@@ -173,7 +174,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		ObfsMode: normalizeObfsMode(c.cfg.ObfsMode),
 	}
 
-	localConn, err := net.ListenPacket("udp", c.cfg.Listen)
+	localConn, err := listenUDP(c.cfg.Listen)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("listen %s: %w", c.cfg.Listen, err)

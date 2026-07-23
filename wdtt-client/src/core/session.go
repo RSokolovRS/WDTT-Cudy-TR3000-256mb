@@ -288,7 +288,7 @@ func RunSession(
 	}
 	defer dtlsConn.Close()
 
-	hctx, hcancel := context.WithTimeout(sessCtx, 20*time.Second)
+	hctx, hcancel := context.WithTimeout(sessCtx, 50*time.Second)
 	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
 	err = dtlsConn.HandshakeContext(hctx)
 	hcancel()

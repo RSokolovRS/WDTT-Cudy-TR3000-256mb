@@ -120,6 +120,7 @@ func (d *Daemon) runWithConfig(ctx context.Context, cfg *config.Settings) error 
 		VKAuthMode:  cfg.VKAuthMode,
 		ObfsMode:    cfg.ObfsMode,
 		MTU:         cfg.MTU,
+		GoDNS:       cfg.GoDNS,
 	}
 
 	c := core.New(coreCfg)

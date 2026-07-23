@@ -341,6 +341,16 @@ return view.extend({
 		o.value('video', _('Video (PT 96)'));
 		o.default = 'audio';
 
+		o = s.option(form.ListValue, 'go_dns', _('DNS для VK API'),
+			_('Резолвер для API VK/TURN. DoH обходит блокировки обычного DNS. custom:IP или doh:URL — вручную через UCI.'));
+		o.value('doh-yandex', _('DoH Яндекс (рекомендуется)'));
+		o.value('doh-cloudflare', _('DoH Cloudflare'));
+		o.value('doh-google', _('DoH Google'));
+		o.value('yandex', _('Яндекс UDP 77.88.8.8'));
+		o.value('cloudflare', _('Cloudflare UDP 1.1.1.1'));
+		o.value('google', _('Google UDP 8.8.8.8'));
+		o.default = 'doh-yandex';
+
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
 			_('Podkop — WDTT только поднимает wg-wdtt, маршруты задаёт Podkop (sing-box). Выборочный — правила WDTT. Полный — весь трафик через WDTT.'));
 		o.value('external', _('Podkop (sing-box) — рекомендуется'));

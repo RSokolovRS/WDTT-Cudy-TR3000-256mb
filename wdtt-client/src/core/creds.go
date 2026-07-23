@@ -717,40 +717,146 @@ func GetCreds(ctx context.Context, link string, streamID int, captchaResultChan 
 	return getVkCredsCached(ctx, link, streamID, captchaResultChan, getCaptchaMode, getVKAuthMode, emitCaptchaRequest)
 }
 
-// ─── DNS dialer setup ───
+// ─── DNS dialer setup (UDP/TCP presets + DoH from qWDTT) ───
 
-func setupGlobalResolver() {
+func goDNSServersForPreset(preset string) []string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "cloudflare":
+		return []string{"1.1.1.1:53", "1.0.0.1:53"}
+	case "google":
+		return []string{"8.8.8.8:53", "8.8.4.4:53"}
+	case "system", "auto", "":
+		return []string{
+			"77.88.8.8:53", "77.88.8.1:53",
+			"8.8.8.8:53", "1.1.1.1:53",
+			"9.9.9.9:53", "208.67.222.222:53",
+		}
+	default: // yandex
+		return []string{"77.88.8.8:53", "77.88.8.1:53"}
+	}
+}
+
+func isLoopbackDNSAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	host = strings.Trim(host, "[]")
+	return host == "127.0.0.1" || host == "::1" || host == "localhost" || host == "0.0.0.0"
+}
+
+func goDNSServersForArg(arg string) []string {
+	arg = strings.TrimSpace(arg)
+	if strings.HasPrefix(arg, "custom:") {
+		raw := strings.TrimPrefix(arg, "custom:")
+		var out []string
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if !strings.Contains(part, ":") {
+				part += ":53"
+			}
+			out = append(out, part)
+		}
+		if len(out) > 0 {
+			return out
+		}
+		return goDNSServersForPreset("yandex")
+	}
+	return goDNSServersForPreset(arg)
+}
+
+func goDNSLabel(arg string) string {
+	arg = strings.TrimSpace(arg)
+	if strings.HasPrefix(arg, "custom:") {
+		return "Свой DNS"
+	}
+	if strings.HasPrefix(arg, "doh:") {
+		return "Свой DoH"
+	}
+	switch strings.ToLower(arg) {
+	case "cloudflare":
+		return "Cloudflare"
+	case "google":
+		return "Google DNS"
+	case "doh-cloudflare":
+		return "Cloudflare DoH"
+	case "doh-google":
+		return "Google DoH"
+	case "doh-yandex":
+		return "Яндекс DoH"
+	case "system", "auto", "":
+		return "Авто (публичные DNS)"
+	default:
+		return "Яндекс DNS"
+	}
+}
+
+func formatGoDNSServers(servers []string) string {
+	parts := make([]string, 0, len(servers))
+	for _, s := range servers {
+		host, port, err := net.SplitHostPort(s)
+		if err != nil {
+			parts = append(parts, s)
+			continue
+		}
+		if port == "53" {
+			parts = append(parts, host)
+		} else {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// NormalizeGoDNS нормализует UCI/CLI значение DNS для VK API.
+func NormalizeGoDNS(arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return "doh-yandex"
+	}
+	return arg
+}
+
+func setupGlobalResolver(arg string) {
+	arg = NormalizeGoDNS(arg)
+	if goDNSIsDoH(arg) {
+		setupDoHResolver(arg, goDoHEndpointsForArg(arg))
+		return
+	}
+
 	dialer := &net.Dialer{
-		Timeout:   2 * time.Second,
+		Timeout:   3 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	// Try multiple public DNS servers in order
-	dnsServers := []string{
-		"77.88.8.8:53",  // Яндекс
-		"77.88.8.1:53",  // Яндекс резерв
-		"8.8.8.8:53",    // Google
-		"1.1.1.1:53",    // Cloudflare
-		"9.9.9.9:53",    // Quad9
-		"208.67.222.222:53", // OpenDNS
-	}
+	servers := goDNSServersForArg(arg)
+	log.Printf(
+		"[КЛИЕНТ] DNS для VK: %s (%s) — UDP/TCP :53",
+		goDNSLabel(arg),
+		formatGoDNSServers(servers),
+	)
 
 	net.DefaultResolver = &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			var lastErr error
-			for _, dns := range dnsServers {
+			for _, dns := range servers {
 				conn, err := dialer.DialContext(ctx, "udp", dns)
 				if err == nil {
 					return conn, nil
 				}
+				lastErr = err
 				conn, err = dialer.DialContext(ctx, "tcp", dns)
 				if err == nil {
 					return conn, nil
 				}
 				lastErr = err
 			}
-			// Fallback to system DNS
-			if address != "" {
+
+			address = strings.TrimSpace(address)
+			if address != "" && !isLoopbackDNSAddress(address) {
 				conn, err := dialer.DialContext(ctx, network, address)
 				if err == nil {
 					return conn, nil

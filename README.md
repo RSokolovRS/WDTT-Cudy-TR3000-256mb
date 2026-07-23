@@ -4,20 +4,20 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.13.2 (рекомендуется — Podkop + WDTT)
+### Рабочие ссылки v3.14.0 (рекомендуется — DoH + Podkop)
 
 | Назначение | URL |
 |------------|-----|
-| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh` |
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh` |
 | routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/wdtt-client/files/wdtt-routing` |
 | firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@7464e07/wdtt-client/files/wdtt-firewall-refresh` |
 | push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
 
-Установка одной командой (pin):
+Установка одной командой (после push pin обновится на коммит):
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@main/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.13.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.14.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -444,6 +444,28 @@ uci set wdtt.globals.obfs_mode='audio'   # безопасно
 uci set wdtt.globals.obfs_mode='video'   # нужен сервер с PT 96
 uci commit wdtt && /etc/init.d/wdtt restart
 ```
+
+## DNS для VK API (go_dns, v3.14.0+)
+
+Резолвер имён для запросов к VK/TURN (не DNS клиентов в LAN). По умолчанию **DoH Яндекс** — обходит блокировки обычного DNS.
+
+LuCI → **DNS для VK API** / UCI `wdtt.globals.go_dns`:
+
+| Значение | Описание |
+|----------|----------|
+| **doh-yandex** (по умолчанию) | DoH `77.88.8.8` / Yandex |
+| **doh-cloudflare** | DoH Cloudflare |
+| **doh-google** | DoH Google |
+| **yandex** / **cloudflare** / **google** | Обычный UDP :53 |
+| **custom:1.2.3.4** | Свой UDP DNS |
+| **doh:https://…** | Свой DoH endpoint |
+
+```bash
+uci set wdtt.globals.go_dns='doh-yandex'
+uci commit wdtt && /etc/init.d/wdtt restart
+```
+
+Также в v3.14: DTLS handshake timeout 50s, `SO_REUSEADDR` на listen UDP (быстрый рестарт).
 
 ## VK Auth (VKCalls без капчи)
 

@@ -13,6 +13,8 @@ config globals 'globals'
 	option vk_auth_mode 'vkcalls'
 	# audio = OPUS PT 111 (совместимо со всеми серверами); video = PT 96 (нужен сервер с поддержкой)
 	option obfs_mode 'audio'
+	# DNS для VK API: doh-yandex|doh-cloudflare|doh-google|yandex|google|cloudflare|custom:IP|doh:URL
+	option go_dns 'doh-yandex'
 	option device_id ''
 	option iface 'wg-wdtt'
 	# selective = правила WDTT; full = весь трафик; external = только туннель (Podkop/PBR)

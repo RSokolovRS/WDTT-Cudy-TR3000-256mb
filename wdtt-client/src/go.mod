@@ -11,6 +11,7 @@ require (
 	github.com/pion/logging v0.2.4
 	github.com/pion/turn/v5 v5.0.5
 	golang.org/x/crypto v0.52.0
+	golang.org/x/net v0.54.0
 )
 
 require (
@@ -27,7 +28,6 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/tam7t/hpkp v0.0.0-20160821193359-2b70b4024ed5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )

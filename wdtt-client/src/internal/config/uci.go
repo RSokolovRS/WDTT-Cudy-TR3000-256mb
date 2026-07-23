@@ -44,6 +44,7 @@ type Settings struct {
 	CaptchaMode          string
 	VKAuthMode           string
 	ObfsMode             string // audio | video
+	GoDNS                string // DNS для VK API: yandex|doh-yandex|doh-cloudflare|...
 	DeviceID             string
 	Iface                string
 	UplinkIface          string // auto | wan | wwan | network section / device
@@ -99,6 +100,7 @@ func Load(path string) (*Settings, error) {
 		CaptchaMode: defaultString(g["captcha_mode"], "wv"),
 		VKAuthMode:  defaultString(g["vk_auth_mode"], "vkcalls"),
 		ObfsMode:    normalizeObfsMode(g["obfs_mode"]),
+		GoDNS:       defaultString(g["go_dns"], "doh-yandex"),
 		DeviceID:    defaultString(g["device_id"], ""),
 		Iface:       defaultString(g["iface"], "wg-wdtt"),
 		UplinkIface: defaultString(g["uplink_iface"], "auto"),
