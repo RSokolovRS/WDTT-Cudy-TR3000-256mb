@@ -4,11 +4,11 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.15.0 (рекомендуется — импорт wdtt:// + DoH + Podkop)
+### Рабочие ссылки v3.15.1 (рекомендуется — импорт wdtt:// + DoH + Podkop)
 
 | Назначение | URL |
 |------------|-----|
-| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@415bdf1/install.sh` |
+| **Установщик** | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@XXXXXXX/install.sh` |
 | routing (selective) | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6cb9748/wdtt-client/files/wdtt-routing` |
 | firewall-refresh | `https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@6cb9748/wdtt-client/files/wdtt-firewall-refresh` |
 | push-domain-fix (с ПК) | `sh scripts/push-domain-fix.sh root@IP` |
@@ -17,7 +17,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@415bdf1/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@XXXXXXX/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.15.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.15.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -467,7 +467,7 @@ uci commit wdtt && /etc/init.d/wdtt restart
 
 Также в v3.14: DTLS handshake timeout 50s, `SO_REUSEADDR` на listen UDP (быстрый рестарт).
 
-## Импорт wdtt:// / qwdtt:// (v3.15.0+)
+## Импорт wdtt:// / qwdtt:// (v3.15.1+)
 
 LuCI → **Импорт профиля**: вставьте ссылку из Telegram-бота сервера или Android qWDTT — заполнятся `peer`, пароль, хеши, потоки.
 
@@ -477,6 +477,8 @@ qwdtt://config?name=Дом&peer=1.2.3.4:56000&hashes=хеш1,хеш2&workers=18&
 ```
 
 Также принимается JSON профиля (как в `.qwdtt`). После импорта нажмите **Подключить**.
+
+Если видите `No related RPC reply` — обновите до **v3.15.1+**, затем `/etc/init.d/rpcd restart` и перелогиньтесь в LuCI.
 
 ## VK Auth (VKCalls без капчи)
 

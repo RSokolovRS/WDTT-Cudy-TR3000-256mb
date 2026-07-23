@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — import URI v3.15.0 */
+/* WDTT overview.js — import URI via RPC v3.15.1 */
 'require view';
 'require ui';
 'require dom';
@@ -44,6 +44,12 @@ var callApplyRules = rpc.declare({
 	object: 'wdtt',
 	method: 'apply_rules',
 	params: [ 'rules' ]
+});
+
+var callImportURI = rpc.declare({
+	object: 'wdtt',
+	method: 'import_uri',
+	params: [ 'peer', 'password', 'hashes', 'workers', 'listen' ]
 });
 
 var callRoutingInfo = rpc.declare({
@@ -177,7 +183,6 @@ function parseWdttImport(raw) {
 }
 
 function syncGlobalsFormField(option, value) {
-	uci.set('wdtt', 'globals', option, value);
 	var nodes = document.querySelectorAll(
 		'[data-widget-id="wdtt.globals.' + option + '"] input, ' +
 		'[data-widget-id="wdtt.globals.' + option + '"] textarea, ' +
@@ -186,8 +191,6 @@ function syncGlobalsFormField(option, value) {
 	);
 	for (var i = 0; i < nodes.length; i++) {
 		nodes[i].value = value;
-		if (typeof nodes[i].dispatchEvent === 'function')
-			nodes[i].dispatchEvent(new Event('change', { bubbles: true }));
 	}
 }
 
@@ -1031,27 +1034,29 @@ return view.extend({
 			return Promise.resolve();
 		}
 
-		syncGlobalsFormField('peer', cfg.peer);
-		syncGlobalsFormField('password', cfg.password);
-		syncGlobalsFormField('hashes', cfg.hashes);
-		syncGlobalsFormField('workers', cfg.workers);
-		if (cfg.listen)
-			uci.set('wdtt', 'globals', 'listen', cfg.listen);
-
-		return uci.save().then(function() {
-			return callApplyConfig();
-		}).then(function(res) {
-			if (res && res.error)
-				throw new Error(res.error);
-			if (ta)
-				ta.value = '';
-			ui.addTimeLimitedNotification(null, E('p', {},
-				_('Импортировано:') + ' ' + (cfg.name || cfg.peer) + '. ' +
-				_('Проверьте поля и нажмите «Подключить».')), 6000, 'success');
-			return self.pollStatus();
-		}).catch(function(e) {
-			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
-		});
+		return callImportURI(cfg.peer, cfg.password, cfg.hashes, cfg.workers, cfg.listen || '127.0.0.1:9000')
+			.then(function(res) {
+				if (!res || res.error)
+					throw new Error((res && res.error) || _('No related RPC reply'));
+				syncGlobalsFormField('peer', cfg.peer);
+				syncGlobalsFormField('password', cfg.password);
+				syncGlobalsFormField('hashes', cfg.hashes);
+				syncGlobalsFormField('workers', cfg.workers);
+				try { uci.unload('wdtt'); } catch (e) {}
+				return uci.load('wdtt');
+			}).then(function() {
+				if (ta)
+					ta.value = '';
+				ui.addTimeLimitedNotification(null, E('p', {},
+					_('Импортировано:') + ' ' + (cfg.name || cfg.peer) + '. ' +
+					_('Проверьте поля и нажмите «Подключить».')), 6000, 'success');
+				return self.pollStatus();
+			}).catch(function(e) {
+				var msg = e.message || String(e);
+				if (/no related rpc reply/i.test(msg))
+					msg = _('Импорт не прошёл: обновите WDTT (нужен RPC import_uri) и перезапустите rpcd.');
+				ui.addTimeLimitedNotification(null, E('p', {}, msg), 7000, 'danger');
+			});
 	},
 
 	handleConnect: function() {

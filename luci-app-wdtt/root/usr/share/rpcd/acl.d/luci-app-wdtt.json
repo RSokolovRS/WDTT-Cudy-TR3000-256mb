@@ -14,7 +14,7 @@
 		"write": {
 			"uci": [ "wdtt" ],
 			"ubus": {
-				"wdtt": [ "captcha", "connect", "disconnect", "apply_config", "apply_rules" ]
+				"wdtt": [ "captcha", "connect", "disconnect", "apply_config", "apply_rules", "import_uri" ]
 			}
 		}
 	}
