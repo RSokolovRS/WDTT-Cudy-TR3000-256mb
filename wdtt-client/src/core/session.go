@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -54,6 +55,56 @@ type connectedUDPConn struct{ *net.UDPConn }
 
 func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) { return c.Write(p) }
 
+// dialTURNConn открывает сокет до TURN-сервера и оборачивает его в
+// net.PacketConn, которого ждёт turn.ClientConfig.Conn. По умолчанию — UDP.
+// При tcp=true поднимает обычное TCP-соединение и оборачивает через
+// turn.NewSTUNConn — это штатная возможность pion/turn (examples/turn-client/tcp),
+// а не самописный протокол: NewSTUNConn сам разбирает STUN/ChannelData framing
+// поверх потокового TCP. Нужен на сетях, где UDP до relay душится или
+// дропается, а TCP до того же relay проходит.
+func dialTURNConn(turnAddr string, tcp bool) (net.PacketConn, io.Closer, error) {
+	if !tcp {
+		resolved, err := net.ResolveUDPAddr("udp", turnAddr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("резолв TURN: %w", err)
+		}
+		c, err := net.DialUDP("udp", nil, resolved)
+		if err != nil {
+			return nil, nil, fmt.Errorf("подключение TURN UDP: %w", err)
+		}
+		_ = c.SetReadBuffer(socketBufSize)
+		_ = c.SetWriteBuffer(socketBufSize)
+		return &connectedUDPConn{c}, c, nil
+	}
+
+	d := net.Dialer{Timeout: 10 * time.Second}
+	c, err := d.Dial("tcp", turnAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("подключение TURN TCP: %w", err)
+	}
+	if tcpConn, ok := c.(*net.TCPConn); ok {
+		_ = tcpConn.SetNoDelay(true)
+		_ = tcpConn.SetReadBuffer(socketBufSize)
+		_ = tcpConn.SetWriteBuffer(socketBufSize)
+	}
+	return turn.NewSTUNConn(c), c, nil
+}
+
+// turnAddressDead сообщает, что по этой ошибке адрес relay стоит забанить:
+// квота, недоступность, таймаут — всё это свойство конкретного адреса, а не
+// пароля или хеша.
+func turnAddressDead(errStr string) bool {
+	for _, marker := range []string{
+		"quota", "486", "unreachable", "timeout",
+		"connection refused", "no route to host", "i/o timeout",
+	} {
+		if strings.Contains(errStr, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func RunSession(
 	ctx context.Context,
 	tp *TurnParams,
@@ -72,7 +123,10 @@ func RunSession(
 	if len(creds.TurnURLs) == 0 {
 		return false, fmt.Errorf("нет TURN URL в учетных данных")
 	}
-	selectedURL := creds.TurnURLs[sessionID%len(creds.TurnURLs)]
+	// Мёртвые relay пропускаем — иначе воркер циклично долбит один и тот же
+	// недоступный адрес вместо рабочих из того же пула.
+	usableURLs := GlobalBlacklist.Available(creds.TurnURLs)
+	selectedURL := usableURLs[sessionID%len(usableURLs)]
 
 	urlhost, urlport, err := net.SplitHostPort(selectedURL)
 	if err != nil {
@@ -86,21 +140,20 @@ func RunSession(
 	}
 	turnAddr := net.JoinHostPort(urlhost, urlport)
 
-	// Транспорт: всегда UDP
-	resolved, err := net.ResolveUDPAddr("udp", turnAddr)
+	turnConn, turnConnCloser, err := dialTURNConn(turnAddr, tp.TCPTransport)
 	if err != nil {
-		return false, fmt.Errorf("резолв TURN: %w", err)
+		if turnAddressDead(strings.ToLower(err.Error())) {
+			GlobalBlacklist.Ban(selectedURL)
+		}
+		return false, err
 	}
-	c, err := net.DialUDP("udp", nil, resolved)
-	if err != nil {
-		return false, fmt.Errorf("подключение TURN UDP: %w", err)
-	}
-	defer c.Close()
-	_ = c.SetReadBuffer(socketBufSize)
-	_ = c.SetWriteBuffer(socketBufSize)
-	var turnConn net.PacketConn = &connectedUDPConn{c}
+	defer turnConnCloser.Close()
 
-	log.Printf("[СЕССИЯ #%d] TURN UDP (%s)", sessionID, turnAddr)
+	if tp.TCPTransport {
+		log.Printf("[СЕССИЯ #%d] TURN TCP (%s)", sessionID, turnAddr)
+	} else {
+		log.Printf("[СЕССИЯ #%d] TURN UDP (%s)", sessionID, turnAddr)
+	}
 
 	// RequestedAddressFamily
 	var addrFamily turn.RequestedAddressFamily
@@ -135,6 +188,9 @@ func RunSession(
 			handleAuthError(creds.CacheStreamID)
 		}
 		errStr := err.Error()
+		if turnAddressDead(strings.ToLower(errStr)) {
+			GlobalBlacklist.Ban(selectedURL)
+		}
 		if strings.Contains(errStr, "Quota") || strings.Contains(errStr, "486") {
 			return false, fmt.Errorf("TURN квота: %w", err)
 		}
@@ -337,6 +393,7 @@ func RunSession(
 	slot := &WorkerSlot{
 		ID:     sessionID,
 		SendCh: make(chan []byte, workerSendBuf),
+		PrioCh: make(chan []byte, prioBuf),
 	}
 	d.Register(slot)
 	defer d.Unregister(slot)
@@ -369,23 +426,52 @@ func RunSession(
 		}
 	}()
 
-	// Writer: dispatcher → DTLS
+	// Writer: dispatcher → DTLS. PrioCh (мелкие пакеты, в основном TCP ACK)
+	// всегда обгоняет SendCh, иначе ACK ждёт весь chunk данных перед собой.
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
+
+		writePkt := func(pkt []byte) bool {
+			_ = dtlsConn.SetWriteDeadline(time.Now().Add(sessionReadTimeout))
+			_, writeErr := dtlsConn.Write(pkt)
+			putPktBuf(pkt)
+			if writeErr != nil {
+				log.Printf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
+				return false
+			}
+			return true
+		}
+
 		for {
+			// Сначала осушаем приоритетную очередь.
+			select {
+			case pkt, ok := <-slot.PrioCh:
+				if !ok {
+					return
+				}
+				if !writePkt(pkt) {
+					return
+				}
+				continue
+			default:
+			}
+
 			select {
 			case <-sessCtx.Done():
 				return
+			case pkt, ok := <-slot.PrioCh:
+				if !ok {
+					return
+				}
+				if !writePkt(pkt) {
+					return
+				}
 			case pkt, ok := <-slot.SendCh:
 				if !ok {
 					return
 				}
-				_ = dtlsConn.SetWriteDeadline(time.Now().Add(sessionReadTimeout))
-				_, writeErr := dtlsConn.Write(pkt)
-				putPktBuf(pkt)
-				if writeErr != nil {
-					log.Printf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
+				if !writePkt(pkt) {
 					return
 				}
 			}

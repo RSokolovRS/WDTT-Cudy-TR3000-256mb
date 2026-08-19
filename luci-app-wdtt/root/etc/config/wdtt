@@ -15,6 +15,8 @@ config globals 'globals'
 	option obfs_mode 'audio'
 	# DNS для VK API: doh-yandex|doh-cloudflare|doh-google|yandex|google|cloudflare|custom:IP|doh:URL
 	option go_dns 'doh-yandex'
+	# Транспорт до TURN-relay: udp (по умолчанию) | tcp — если провайдер душит UDP
+	option turn_transport 'udp'
 	option device_id ''
 	option iface 'wg-wdtt'
 	# selective = правила WDTT; full = весь трафик; external = только туннель (Podkop/PBR)

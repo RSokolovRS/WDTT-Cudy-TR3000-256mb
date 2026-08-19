@@ -32,25 +32,26 @@ type Rule struct {
 
 // Settings — параметры из UCI /etc/config/wdtt.
 type Settings struct {
-	Enabled              bool
-	Peer                 string
-	Password             string
-	Hashes               []string
-	Workers              int
-	MTU                  int
-	Listen               string
-	TurnHost             string
-	TurnPort             string
-	CaptchaMode          string
-	VKAuthMode           string
-	ObfsMode             string // audio | video
-	GoDNS                string // DNS для VK API: yandex|doh-yandex|doh-cloudflare|...
-	DeviceID             string
-	Iface                string
-	UplinkIface          string // auto | wan | wwan | network section / device
-	RoutingMode          RoutingMode
-	RoutingExcludedIPs   []string
-	Rules                []Rule
+	Enabled            bool
+	Peer               string
+	Password           string
+	Hashes             []string
+	Workers            int
+	MTU                int
+	Listen             string
+	TurnHost           string
+	TurnPort           string
+	CaptchaMode        string
+	VKAuthMode         string
+	ObfsMode           string // audio | video
+	GoDNS              string // DNS для VK API: yandex|doh-yandex|doh-cloudflare|...
+	TurnTransport      string // udp | tcp
+	DeviceID           string
+	Iface              string
+	UplinkIface        string // auto | wan | wwan | network section / device
+	RoutingMode        RoutingMode
+	RoutingExcludedIPs []string
+	Rules              []Rule
 }
 
 type uciSection struct {
@@ -89,22 +90,23 @@ func Load(path string) (*Settings, error) {
 
 	g := globals.options
 	s := &Settings{
-		Enabled:     g["enabled"] == "1",
-		Peer:        strings.TrimSpace(g["peer"]),
-		Password:    g["password"],
-		Workers:     atoiDefault(g["workers"], 12),
-		MTU:         atoiDefault(g["mtu"], 1240),
-		Listen:      defaultString(g["listen"], "127.0.0.1:9000"),
-		TurnHost:    strings.TrimSpace(g["turn_host"]),
-		TurnPort:    strings.TrimSpace(g["turn_port"]),
-		CaptchaMode: defaultString(g["captcha_mode"], "wv"),
-		VKAuthMode:  defaultString(g["vk_auth_mode"], "vkcalls"),
-		ObfsMode:    normalizeObfsMode(g["obfs_mode"]),
-		GoDNS:       defaultString(g["go_dns"], "doh-yandex"),
-		DeviceID:    defaultString(g["device_id"], ""),
-		Iface:       defaultString(g["iface"], "wg-wdtt"),
-		UplinkIface: defaultString(g["uplink_iface"], "auto"),
-		Rules:       rules,
+		Enabled:       g["enabled"] == "1",
+		Peer:          strings.TrimSpace(g["peer"]),
+		Password:      g["password"],
+		Workers:       atoiDefault(g["workers"], 12),
+		MTU:           atoiDefault(g["mtu"], 1240),
+		Listen:        defaultString(g["listen"], "127.0.0.1:9000"),
+		TurnHost:      strings.TrimSpace(g["turn_host"]),
+		TurnPort:      strings.TrimSpace(g["turn_port"]),
+		CaptchaMode:   defaultString(g["captcha_mode"], "wv"),
+		VKAuthMode:    defaultString(g["vk_auth_mode"], "vkcalls"),
+		ObfsMode:      normalizeObfsMode(g["obfs_mode"]),
+		GoDNS:         defaultString(g["go_dns"], "doh-yandex"),
+		TurnTransport: normalizeTurnTransport(g["turn_transport"]),
+		DeviceID:      defaultString(g["device_id"], ""),
+		Iface:         defaultString(g["iface"], "wg-wdtt"),
+		UplinkIface:   defaultString(g["uplink_iface"], "auto"),
+		Rules:         rules,
 	}
 
 	// routing_mode: selective | full | external (Podkop/PBR)
@@ -294,6 +296,15 @@ func normalizeObfsMode(mode string) string {
 		return "video"
 	default:
 		return "audio"
+	}
+}
+
+func normalizeTurnTransport(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "tcp":
+		return "tcp"
+	default:
+		return "udp"
 	}
 }
 

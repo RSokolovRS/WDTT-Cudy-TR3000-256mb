@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-
 const workersPerGroup = 9
 
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
@@ -333,11 +332,12 @@ func normalizeVKJoinHash(input string) string {
 
 // TurnParams — конфигурация TURN
 type TurnParams struct {
-	Host     string
-	Port     string
-	Hashes   []string
-	WrapKey  []byte // Password-derived WRAP key (32 bytes), nil = disabled
-	ObfsMode string // audio (default) | video
+	Host         string
+	Port         string
+	Hashes       []string
+	WrapKey      []byte // Password-derived WRAP key (32 bytes), nil = disabled
+	ObfsMode     string // audio (default) | video
+	TCPTransport bool   // true = TURN поверх TCP (когда UDP душат)
 }
 
 // Credentials — учетные данные TURN
@@ -347,5 +347,3 @@ type Credentials struct {
 	TurnURLs      []string
 	CacheStreamID int
 }
-
-

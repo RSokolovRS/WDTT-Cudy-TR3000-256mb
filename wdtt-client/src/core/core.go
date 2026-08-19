@@ -12,19 +12,20 @@ import (
 
 // Config — все параметры запуска (профиль + runtime).
 type Config struct {
-	PeerAddr    string   // -peer
-	Password    string   // -password
-	Hashes      []string // -vk (уже распарсенные)
-	Listen      string   // -listen, default "127.0.0.1:9000"
-	TurnHost    string   // -turn
-	TurnPort    string   // -port
-	DeviceID    string   // -device-id
-	Workers     int      // -n
-	CaptchaMode string   // -captcha-mode
-	VKAuthMode  string   // vkcalls | legacy
-	ObfsMode    string   // audio | video
-	MTU         int      // 0 = default 1240
-	GoDNS       string   // DNS для VK API: yandex|google|cloudflare|doh-yandex|doh-google|doh-cloudflare|custom:IP|doh:URL
+	PeerAddr      string   // -peer
+	Password      string   // -password
+	Hashes        []string // -vk (уже распарсенные)
+	Listen        string   // -listen, default "127.0.0.1:9000"
+	TurnHost      string   // -turn
+	TurnPort      string   // -port
+	DeviceID      string   // -device-id
+	Workers       int      // -n
+	CaptchaMode   string   // -captcha-mode
+	VKAuthMode    string   // vkcalls | legacy
+	ObfsMode      string   // audio | video
+	MTU           int      // 0 = default 1240
+	GoDNS         string   // DNS для VK API: yandex|google|cloudflare|doh-yandex|doh-google|doh-cloudflare|custom:IP|doh:URL
+	TurnTransport string   // udp (default) | tcp
 }
 
 // EventType — тип события от ядра.
@@ -167,11 +168,15 @@ func (c *Core) Start() (<-chan Event, error) {
 	n = (n / workersPerGroup) * workersPerGroup
 
 	tp := &TurnParams{
-		Host:     c.cfg.TurnHost,
-		Port:     c.cfg.TurnPort,
-		Hashes:   c.cfg.Hashes,
-		WrapKey:  wrapKey,
-		ObfsMode: normalizeObfsMode(c.cfg.ObfsMode),
+		Host:         c.cfg.TurnHost,
+		Port:         c.cfg.TurnPort,
+		Hashes:       c.cfg.Hashes,
+		WrapKey:      wrapKey,
+		ObfsMode:     normalizeObfsMode(c.cfg.ObfsMode),
+		TCPTransport: strings.EqualFold(strings.TrimSpace(c.cfg.TurnTransport), "tcp"),
+	}
+	if tp.TCPTransport {
+		log.Printf("[ЯДРО] Транспорт TURN: TCP")
 	}
 
 	localConn, err := listenUDP(c.cfg.Listen)

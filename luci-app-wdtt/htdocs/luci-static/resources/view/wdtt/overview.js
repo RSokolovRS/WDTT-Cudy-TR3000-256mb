@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — import URI via RPC v3.15.1 */
+/* WDTT overview.js — import URI via RPC + TURN transport v3.16.0 */
 'require view';
 'require ui';
 'require dom';
@@ -514,6 +514,12 @@ return view.extend({
 		o.value('cloudflare', _('Cloudflare UDP 1.1.1.1'));
 		o.value('google', _('Google UDP 8.8.8.8'));
 		o.default = 'doh-yandex';
+
+		o = s.option(form.ListValue, 'turn_transport', _('Транспорт TURN'),
+			_('UDP — по умолчанию, быстрее. TCP — если провайдер душит или дропает UDP до TURN-relay (замечено у некоторых мобильных операторов); задержка выше, зато соединение поднимается.'));
+		o.value('udp', _('UDP (рекомендуется)'));
+		o.value('tcp', _('TCP (если UDP блокируют)'));
+		o.default = 'udp';
 
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
 			_('Podkop — WDTT только поднимает wg-wdtt, маршруты задаёт Podkop (sing-box). Выборочный — правила WDTT. Полный — весь трафик через WDTT.'));

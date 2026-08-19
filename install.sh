@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.15.1"
+WDTT_INSTALL_VERSION="3.16.0"
 WDTT_ROUTING_VERSION="3.13.2"
-WDTT_BIN_TAG="v3.14.0"
+WDTT_BIN_TAG="v3.16.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -28,7 +28,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.14.0/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.16.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -721,6 +721,7 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.vk_auth_mode 2>/dev/null > "$f/vk_auth_mode"
 	uci -q get wdtt.globals.obfs_mode 2>/dev/null > "$f/obfs_mode"
 	uci -q get wdtt.globals.go_dns 2>/dev/null > "$f/go_dns"
+	uci -q get wdtt.globals.turn_transport 2>/dev/null > "$f/turn_transport"
 	uci -q get wdtt.globals.workers 2>/dev/null > "$f/workers"
 	uci -q get wdtt.globals.routing_mode 2>/dev/null > "$f/routing_mode"
 	uci -q get wdtt.globals.uplink_iface 2>/dev/null > "$f/uplink_iface"
@@ -738,7 +739,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes enabled captcha_mode vk_auth_mode obfs_mode go_dns workers routing_mode uplink_iface; do
+	for v in peer password hashes enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport workers routing_mode uplink_iface; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"
@@ -774,6 +775,7 @@ apply_clean_routing_defaults() {
 	uci -q set wdtt.globals.vk_auth_mode='vkcalls'
 	uci -q set wdtt.globals.obfs_mode='audio'
 	uci -q set wdtt.globals.go_dns='doh-yandex'
+	uci -q set wdtt.globals.turn_transport='udp'
 	sed -i '/^[[:space:]]*option domain[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/^[[:space:]]*option domains[[:space:]]/d' /etc/config/wdtt 2>/dev/null
 	sed -i '/list domain.*2iw/d' /etc/config/wdtt 2>/dev/null
@@ -1019,10 +1021,12 @@ post_install() {
 		apply_clean_routing_defaults
 	fi
 
-	# v3.14+: DoH по умолчанию, если опция отсутствует
+	# v3.14+: DoH по умолчанию; v3.16+: транспорт TURN — если опций нет
 	if [ -f /etc/config/wdtt ]; then
 		uci -q get wdtt.globals.go_dns >/dev/null 2>&1 \
 			|| uci -q set wdtt.globals.go_dns='doh-yandex'
+		uci -q get wdtt.globals.turn_transport >/dev/null 2>&1 \
+			|| uci -q set wdtt.globals.turn_transport='udp'
 		uci -q commit wdtt 2>/dev/null
 	fi
 

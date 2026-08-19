@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.15.1 (рекомендуется — импорт wdtt:// + DoH + Podkop)
+### Рабочие ссылки v3.16.0 (рекомендуется — быстрый диспетчер + TURN TCP + импорт wdtt://)
 
 | Назначение | URL |
 |------------|-----|
@@ -48,7 +48,7 @@ apk del wget-nossl
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5dc2c2c/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -64,7 +64,7 @@ sh /tmp/wdtt-install.sh
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5dc2c2c/install.sh
 sh /tmp/wdtt-install.sh --clean
 ```
 
@@ -72,7 +72,7 @@ sh /tmp/wdtt-install.sh --clean
 
 ```bash
 wget -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5dc2c2c/install.sh
 sh /tmp/wdtt-install.sh --uninstall
 ```
 
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.15.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.16.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -197,7 +197,7 @@ ssh root@192.168.1.1 'WDTT_LOCAL_BIN=/tmp/wdttd sh /tmp/wdtt-install.sh'
 
 ```bash
 uclient-fetch -q -O /tmp/wdtt-install.sh \
-  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@3eec446/install.sh
+  https://cdn.jsdelivr.net/gh/RSokolovRS/WDTT-Cudy-TR3000-256mb@5dc2c2c/install.sh
 sh /tmp/wdtt-install.sh
 ```
 
@@ -390,6 +390,7 @@ uci set wdtt.globals.routing_mode='external'   # или selective / full
 uci set wdtt.globals.uplink_iface='auto'
 uci set wdtt.globals.workers='12'
 uci set wdtt.globals.obfs_mode='audio'   # или video — только если VPS принимает PT 96
+uci set wdtt.globals.turn_transport='udp'   # tcp — если провайдер душит UDP
 
 # selective: домены через WDTT; external: домены в Podkop
 uci set wdtt.youtube=rule
@@ -479,6 +480,27 @@ qwdtt://config?name=Дом&peer=1.2.3.4:56000&hashes=хеш1,хеш2&workers=18&
 Также принимается JSON профиля (как в `.qwdtt`). После импорта нажмите **Подключить**.
 
 Если видите `No related RPC reply` — обновите до **v3.15.1+**, затем `/etc/init.d/rpcd restart` и перелогиньтесь в LuCI.
+
+## Транспорт TURN (turn_transport, v3.16.0+)
+
+По умолчанию до TURN-relay идёт **UDP** — он быстрее. Если провайдер душит или дропает UDP (замечено у части мобильных операторов), туннель либо не поднимается, либо еле шевелится. Тогда переключите на **TCP**: pion/turn заворачивает STUN/ChannelData в TCP-поток до того же relay. Задержка выше, зато соединение проходит.
+
+LuCI → **Транспорт TURN** / UCI `wdtt.globals.turn_transport`:
+
+```bash
+uci set wdtt.globals.turn_transport='tcp'   # udp (по умолчанию) | tcp
+uci commit wdtt && /etc/init.d/wdtt restart
+```
+
+## Скорость и устойчивость (v3.16.0)
+
+Изменения в ядре `wdttd`, настройки не требуют:
+
+- **Адаптивные chunk'и в диспетчере.** Раньше на один TURN-relay уходило ровно 8 пакетов подряд независимо от их размера. Теперь размер группы зависит от размера пакета (крупные данные — до 64 подряд, мелкие — 1–3): меньше переключений relay на мегабайт трафика и меньше reorder, из-за которого TCP внутри туннеля ронял окно.
+- **Приоритет мелких пакетов.** Пакеты до 128 байт (в основном TCP ACK) идут через отдельную очередь воркера и обгоняют данные, поэтому ACK больше не ждёт весь chunk на медленном relay.
+- **Предохранитель по времени.** Если текущий relay задержал группу дольше 15 мс, диспетчер переключается на следующий, не дожидаясь конца chunk'а.
+- **Бан мёртвых relay.** Адрес, ответивший quota/unreachable/timeout, исключается из пула на 5 минут — воркеры больше не долбят один и тот же недоступный relay.
+- **Очередь на приём** увеличена с 384 до 512 пакетов: на 70–80 Мбит/с при RTT ~50 мс старого запаса не хватало.
 
 ## VK Auth (VKCalls без капчи)
 

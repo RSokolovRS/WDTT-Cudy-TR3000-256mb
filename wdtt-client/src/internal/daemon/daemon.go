@@ -108,19 +108,20 @@ func (d *Daemon) runWithConfig(ctx context.Context, cfg *config.Settings) error 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	coreCfg := core.Config{
-		PeerAddr:    cfg.Peer,
-		Password:    cfg.Password,
-		Hashes:      cfg.Hashes,
-		Listen:      cfg.Listen,
-		TurnHost:    cfg.TurnHost,
-		TurnPort:    cfg.TurnPort,
-		DeviceID:    cfg.DeviceID,
-		Workers:     cfg.Workers,
-		CaptchaMode: cfg.CaptchaMode,
-		VKAuthMode:  cfg.VKAuthMode,
-		ObfsMode:    cfg.ObfsMode,
-		MTU:         cfg.MTU,
-		GoDNS:       cfg.GoDNS,
+		PeerAddr:      cfg.Peer,
+		Password:      cfg.Password,
+		Hashes:        cfg.Hashes,
+		Listen:        cfg.Listen,
+		TurnHost:      cfg.TurnHost,
+		TurnPort:      cfg.TurnPort,
+		DeviceID:      cfg.DeviceID,
+		Workers:       cfg.Workers,
+		CaptchaMode:   cfg.CaptchaMode,
+		VKAuthMode:    cfg.VKAuthMode,
+		ObfsMode:      cfg.ObfsMode,
+		MTU:           cfg.MTU,
+		GoDNS:         cfg.GoDNS,
+		TurnTransport: cfg.TurnTransport,
 	}
 
 	c := core.New(coreCfg)
