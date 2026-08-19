@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.16.0 (рекомендуется — быстрый диспетчер + TURN TCP + импорт wdtt://)
+### Рабочие ссылки v3.16.1 (обязательно — исправлен обрыв 8 из 9 воркеров)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.16.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.16.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -490,6 +490,22 @@ LuCI → **Транспорт TURN** / UCI `wdtt.globals.turn_transport`:
 ```bash
 uci set wdtt.globals.turn_transport='tcp'   # udp (по умолчанию) | tcp
 uci commit wdtt && /etc/init.d/wdtt restart
+```
+
+## Авторизация воркеров (v3.16.1)
+
+Сервер закрывает любое DTLS-соединение, которое первым пакетом не прислало `GETCONF:` или `AUTH:deviceID|password`. Конфиг запрашивает только один воркер из девяти, поэтому до v3.16.1 остальные восемь молчали до keepalive и получали разрыв примерно через 15 секунд после подключения. В логах это выглядело как бесконечная карусель:
+
+```
+[ВОРКЕР #5] [READY] Туннель готов к работе ✓
+[ВОРКЕР #5] Ошибка Reader: EOF
+```
+
+Трафик при этом шёл в один поток вместо девяти — скорость падала в разы. Начиная с v3.16.1 воркеры без запроса конфига сразу отправляют `AUTH` с тем же `device_id`, что и `GETCONF` (при пустом `wdtt.globals.device_id` используется machine-id роутера). Если после обновления карусель `Reader: EOF` осталась — проверьте, что на роутере действительно новый бинарь:
+
+```bash
+logread -e wdtt | grep -c 'Reader: EOF'   # не должно расти
+wg show wg-wdtt | grep transfer            # должно расти в обе стороны
 ```
 
 ## Скорость и устойчивость (v3.16.0)

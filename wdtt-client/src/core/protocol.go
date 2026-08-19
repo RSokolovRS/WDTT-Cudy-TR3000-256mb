@@ -46,4 +46,14 @@ func RequestConfig(conn net.Conn, localPort, deviceID, password string) (string,
 	return resp, nil
 }
 
+// SendAuth представляет сессию серверу. Сервер закрывает любое соединение,
+// которое не прислало GETCONF или AUTH первым пакетом, поэтому воркеры,
+// не запрашивающие конфиг, обязаны отправить AUTH сразу после handshake.
+func SendAuth(conn net.Conn, deviceID, password string) error {
+	payload := fmt.Sprintf("AUTH:%s|%s", deviceID, password)
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		return fmt.Errorf("отправка AUTH: %w", err)
+	}
 
+	return nil
+}
