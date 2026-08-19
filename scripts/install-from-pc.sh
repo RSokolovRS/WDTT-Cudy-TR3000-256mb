@@ -13,7 +13,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="/tmp/wdtt-pc-install"
 VERSION="3.16.1"
 REPO="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb"
-PIN="ff563bf"
+PIN="71a26a3"
 MIN_BIN_SIZE=1048576
 
 wdtt_local_bin_ok() {
