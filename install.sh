@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.16.1"
+WDTT_INSTALL_VERSION="3.16.2"
 WDTT_ROUTING_VERSION="3.13.2"
-WDTT_BIN_TAG="v3.16.1"
+WDTT_BIN_TAG="v3.16.2"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -28,7 +28,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.16.1/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.16.2/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -722,6 +722,9 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.obfs_mode 2>/dev/null > "$f/obfs_mode"
 	uci -q get wdtt.globals.go_dns 2>/dev/null > "$f/go_dns"
 	uci -q get wdtt.globals.turn_transport 2>/dev/null > "$f/turn_transport"
+	# device_id сохраняем обязательно: сервер привязывает к нему пароль, и новый
+	# ID после переустановки получит DENIED:device_mismatch
+	uci -q get wdtt.globals.device_id 2>/dev/null > "$f/device_id"
 	uci -q get wdtt.globals.workers 2>/dev/null > "$f/workers"
 	uci -q get wdtt.globals.routing_mode 2>/dev/null > "$f/routing_mode"
 	uci -q get wdtt.globals.uplink_iface 2>/dev/null > "$f/uplink_iface"
@@ -739,7 +742,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport workers routing_mode uplink_iface; do
+	for v in peer password hashes enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport device_id workers routing_mode uplink_iface; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"
@@ -1006,6 +1009,38 @@ write_wdtt_version_stamp() {
 	printf '%s\n' "$WDTT_INSTALL_VERSION" > /usr/share/wdtt/version
 }
 
+# ensure_wdtt_device_id фиксирует ID устройства во флеше. Сервер привязывает
+# пароль к device_id (лимит по умолчанию — одно устройство), поэтому ID обязан
+# выживать перезагрузки: /var на OpenWrt — tmpfs, machine-id оттуда меняется.
+ensure_wdtt_device_id() {
+	local id mac iface
+
+	[ -f /etc/config/wdtt ] || return 0
+
+	id="$(uci -q get wdtt.globals.device_id 2>/dev/null | tr -cd 'A-Za-z0-9._-')"
+	if [ -z "$id" ] && [ -f /etc/wdtt/device_id ]; then
+		id="$(tr -cd 'A-Za-z0-9._-' < /etc/wdtt/device_id)"
+	fi
+
+	if [ -z "$id" ]; then
+		for iface in br-lan eth0 eth1 lan br-wan wan; do
+			[ -f "/sys/class/net/$iface/address" ] || continue
+			mac="$(sed 's/[^0-9A-Fa-f]//g' "/sys/class/net/$iface/address" | tr 'A-Z' 'a-z')"
+			[ "${#mac}" = 12 ] && [ "$mac" != "000000000000" ] || continue
+			id="openwrt-$mac"
+			break
+		done
+	fi
+
+	[ -n "$id" ] || return 0
+
+	mkdir -p /etc/wdtt 2>/dev/null || true
+	printf '%s\n' "$id" > /etc/wdtt/device_id 2>/dev/null || true
+	uci -q set "wdtt.globals.device_id=$id"
+	uci -q commit wdtt 2>/dev/null
+	msg "  device_id: $id"
+}
+
 post_install() {
 	if [ ! -f /etc/config/wdtt ]; then
 		download_file "$RAW_URL/luci-app-wdtt/root/etc/config/wdtt" /etc/config/wdtt \
@@ -1031,6 +1066,8 @@ post_install() {
 	fi
 
 	fix_wdtt_legacy
+
+	ensure_wdtt_device_id
 
 	write_wdtt_version_stamp
 

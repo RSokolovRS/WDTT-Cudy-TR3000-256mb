@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -140,8 +141,8 @@ func Load(path string) (*Settings, error) {
 		}
 	}
 
-	if s.DeviceID == "" {
-		s.DeviceID = readMachineID()
+	if s.DeviceID = sanitizeDeviceID(s.DeviceID); s.DeviceID == "" {
+		s.DeviceID = resolveDeviceID()
 	}
 
 	return s, nil
@@ -321,13 +322,122 @@ func atoiDefault(v string, def int) int {
 	return n
 }
 
-func readMachineID() string {
-	data, err := os.ReadFile("/etc/machine-id")
-	if err != nil {
-		data, err = os.ReadFile("/var/lib/dbus/machine-id")
+// deviceIDDir/deviceIDFile — постоянное хранилище ID устройства на флеше.
+// Сервер привязывает пароль к device_id и при лимите в одно устройство
+// отказывает любому другому (DENIED:device_mismatch), поэтому ID обязан быть
+// одинаковым между перезагрузками. /var на OpenWrt — симлинк в tmpfs, так что
+// /var/lib/dbus/machine-id для этого не годится: он новый после каждой загрузки.
+const (
+	deviceIDDir  = "/etc/wdtt"
+	deviceIDFile = deviceIDDir + "/device_id"
+)
+
+// macCandidates — интерфейсы, MAC которых берём как основу ID. Порядок важен:
+// br-lan есть почти всегда и не меняется, eth* — фоллбэк для нестандартных сборок.
+var macCandidates = []string{"br-lan", "eth0", "eth1", "lan", "br-wan", "wan"}
+
+// resolveDeviceID возвращает стабильный между перезагрузками ID устройства.
+func resolveDeviceID() string {
+	if id := readDeviceIDFile(); id != "" {
+		return id
 	}
+	id := deriveDeviceID()
+	persistDeviceID(id)
+	return id
+}
+
+func readDeviceIDFile() string {
+	data, err := os.ReadFile(deviceIDFile)
 	if err != nil {
-		return "openwrt-wdtt"
+		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return sanitizeDeviceID(string(data))
+}
+
+// persistDeviceID сохраняет ID, чтобы он не зависел от порядка интерфейсов и
+// переименований в будущих прошивках. Ошибки игнорируем: при read-only rootfs
+// ID всё равно будет выведен из MAC и останется тем же.
+func persistDeviceID(id string) {
+	if id == "" {
+		return
+	}
+	if err := os.MkdirAll(deviceIDDir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(deviceIDFile, []byte(id+"\n"), 0o644)
+}
+
+func deriveDeviceID() string {
+	for _, iface := range macCandidates {
+		if mac := readIfaceMAC(iface); mac != "" {
+			return "openwrt-" + mac
+		}
+	}
+	if mac := anyPhysicalMAC(); mac != "" {
+		return "openwrt-" + mac
+	}
+	// /etc/machine-id лежит на флеше (в отличие от /var/lib/dbus/machine-id),
+	// поэтому как фоллбэк подходит, если он вообще есть.
+	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
+		if id := sanitizeDeviceID(string(data)); id != "" {
+			return id
+		}
+	}
+	return "openwrt-wdtt"
+}
+
+func readIfaceMAC(iface string) string {
+	data, err := os.ReadFile("/sys/class/net/" + iface + "/address")
+	if err != nil {
+		return ""
+	}
+	mac := strings.ToLower(strings.TrimSpace(string(data)))
+	mac = strings.ReplaceAll(mac, ":", "")
+	if len(mac) != 12 || mac == "000000000000" {
+		return ""
+	}
+	return mac
+}
+
+// anyPhysicalMAC перебирает интерфейсы по алфавиту и берёт первый физический
+// (наличие symlink device отсекает bridge, wg, tun и прочие виртуальные).
+func anyPhysicalMAC() string {
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		return ""
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if name == "lo" {
+			continue
+		}
+		if _, err := os.Stat("/sys/class/net/" + name + "/device"); err != nil {
+			continue
+		}
+		if mac := readIfaceMAC(name); mac != "" {
+			return mac
+		}
+	}
+	return ""
+}
+
+// sanitizeDeviceID оставляет только безопасные символы: ID уходит на сервер в
+// GETCONF/AUTH, где поля разделяются '|'.
+func sanitizeDeviceID(raw string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(raw) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return b.String()
 }

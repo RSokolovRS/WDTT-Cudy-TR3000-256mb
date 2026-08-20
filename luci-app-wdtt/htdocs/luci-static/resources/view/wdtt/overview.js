@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — import URI via RPC + TURN transport v3.16.1 */
+/* WDTT overview.js — import URI via RPC + TURN transport + device_id v3.16.2 */
 'require view';
 'require ui';
 'require dom';
@@ -520,6 +520,11 @@ return view.extend({
 		o.value('udp', _('UDP (рекомендуется)'));
 		o.value('tcp', _('TCP (если UDP блокируют)'));
 		o.default = 'udp';
+
+		o = s.option(form.Value, 'device_id', _('ID устройства'),
+			_('Сервер привязывает пароль к этому ID (обычно одно устройство на пароль). Заполняется автоматически из MAC при установке — менять не нужно. После смены ID потребуется отвязать устройство от пароля на сервере.'));
+		o.placeholder = 'openwrt-<mac>';
+		o.rmempty = true;
 
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
 			_('Podkop — WDTT только поднимает wg-wdtt, маршруты задаёт Podkop (sing-box). Выборочный — правила WDTT. Полный — весь трафик через WDTT.'));

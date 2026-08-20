@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.16.1 (обязательно — исправлен обрыв 8 из 9 воркеров)
+### Рабочие ссылки v3.16.2 (обязательно — стабильный device_id + все 9 воркеров)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.16.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.16.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -491,6 +491,26 @@ LuCI → **Транспорт TURN** / UCI `wdtt.globals.turn_transport`:
 uci set wdtt.globals.turn_transport='tcp'   # udp (по умолчанию) | tcp
 uci commit wdtt && /etc/init.d/wdtt restart
 ```
+
+## ID устройства (device_id, v3.16.2)
+
+Сервер привязывает пароль к `device_id`, и лимит по умолчанию — одно устройство на пароль. До v3.16.2 клиент при пустом `wdtt.globals.device_id` брал machine-id, в том числе из `/var/lib/dbus/machine-id`, а `/var` на OpenWrt — симлинк в tmpfs. После каждой перезагрузки ID был новый, сервер видел незнакомое устройство и отказывал:
+
+```
+FATAL_AUTH: пароль привязан к другому устройству
+```
+
+Теперь ID выводится из MAC-адреса LAN-интерфейса, сохраняется в `/etc/wdtt/device_id` (флеш, а не tmpfs) и записывается в UCI при установке. `install.sh` переносит `device_id` при переустановке вместе с остальными секретами, а `wdtt-doctor` показывает текущее значение.
+
+Посмотреть и при необходимости задать вручную:
+
+```bash
+uci get wdtt.globals.device_id
+logread -e wdtt | grep device_id
+uci set wdtt.globals.device_id='openwrt-my-router' && uci commit wdtt
+```
+
+При обновлении с версий до v3.16.2 ID сменится один раз — на сервере уже висит привязка к старому случайному значению. Попросите владельца VPS отвязать устройства от пароля (в Telegram-боте это кнопка «Отвязать ВСЕ устройства») либо поднять лимит `max_devices`. Порядок: сначала обновиться, затем отвязать, затем перезапустить `/etc/init.d/wdtt restart` — после этого сервер привяжет уже постоянный ID, и перезагрузки роутера перестанут ломать доступ.
 
 ## Авторизация воркеров (v3.16.1)
 

@@ -41,6 +41,9 @@ else
 	echo "vk_auth_mode: $(uci -q get wdtt.globals.vk_auth_mode 2>/dev/null)"
 	echo "package_version: $(tr -d '\r\n' < /usr/share/wdtt/version 2>/dev/null || echo unknown)"
 	echo "uplink_iface: $(uci -q get wdtt.globals.uplink_iface 2>/dev/null || echo auto)"
+	# device_id должен быть непустым и одинаковым после перезагрузки, иначе
+	# сервер ответит DENIED:device_mismatch
+	echo "device_id: $(uci -q get wdtt.globals.device_id 2>/dev/null || echo EMPTY) (файл: $(tr -d '\r\n' < /etc/wdtt/device_id 2>/dev/null || echo none))"
 fi
 
 echo "--- uplink ---"
