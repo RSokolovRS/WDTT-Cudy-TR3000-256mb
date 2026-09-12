@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.17.0 (VK-хеши 1–4 + ход подключения + быстрый старт)
+### Рабочие ссылки v3.18.0 (RAW-режим + VK-хеши 1–4 + ход подключения)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.17.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.18.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -511,9 +511,33 @@ uci commit wdtt && /etc/init.d/wdtt restart
 [WG] Туннель wg-wdtt поднят
 ```
 
-На OpenWRT нет raw-IP: трафик идёт **WireGuard + DTLS**, а не «VPN (raw-IP, без WireGuard)» как на Android.
+По умолчанию трафик идёт **WireGuard + DTLS** (`tunnel_mode=wg`). Можно включить **RAW** — сырые IP без WireGuard и без DTLS, как на Android qWDTT (`-mode rawtun`).
 
 Из qWDTT 1.4.3 также перенесены быстрый старт воркеров (75 мс stagger, эстафета групп ~0.5 с) и быстрый reconnect при EOF / broken pipe.
+
+## RAW-режим (tunnel_mode=raw)
+
+Обычный WDTT-сервер (GETCONF + DTLS + WireGuard) в RAW **не** заработает. Нужен qWDTT/PWDTT с `-listen-raw`: клиент шлёт `GETCONF_RAW:deviceID|password`, сервер отвечает `RAWCONF:ip|dns|mtu`, дальше IP-пакеты идут по TURN + RTP-obfs AEAD на интерфейс `tun-wdtt`.
+
+LuCI → **Транспорт** / UCI:
+
+```bash
+uci set wdtt.globals.tunnel_mode='raw'   # wg (по умолчанию) | raw
+uci commit wdtt && /etc/init.d/wdtt restart
+```
+
+На роутере нужен `kmod-tun` (`/dev/net/tun`). Порт RAW на VPS часто **не** тот же, что DTLS (в `.conf` Windows/Android `Endpoint` — это DTLS). Если переключили RAW на обычный сервер, в логе будет отказ на `GETCONF_RAW` — верните `tunnel_mode=wg`.
+
+С Podkop в RAW укажите интерфейс **tun-wdtt** (не wg-wdtt). После первого успешного RAW `firewall-refresh` пропишет `network.wdtt.device=tun-wdtt`.
+
+В «Ходе подключения» для RAW:
+
+```
+[СЕТЬ] Режим: VPN (raw-IP, без WireGuard/DTLS)
+[ВОРКЕР #1] [ПРЯМОЙ] Без DTLS, только RTP-obfs AEAD ✓
+[ВОРКЕР #1] RAW-конфиг получен (ip=…)
+[RAW] Туннель tun-wdtt поднят
+```
 
 ## ID устройства (device_id, v3.16.2)
 

@@ -26,6 +26,8 @@ type Config struct {
 	MTU           int      // 0 = default 1240
 	GoDNS         string   // DNS для VK API: yandex|google|cloudflare|doh-yandex|doh-google|doh-cloudflare|custom:IP|doh:URL
 	TurnTransport string   // udp (default) | tcp
+	RawMode       bool     // сырые IP без WireGuard/DTLS (сервер -listen-raw)
+	TunIface      string   // имя TUN в RAW-режиме, по умолчанию tun-wdtt
 }
 
 // EventType — тип события от ядра.
@@ -174,6 +176,7 @@ func (c *Core) Start() (<-chan Event, error) {
 		WrapKey:      wrapKey,
 		ObfsMode:     normalizeObfsMode(c.cfg.ObfsMode),
 		TCPTransport: strings.EqualFold(strings.TrimSpace(c.cfg.TurnTransport), "tcp"),
+		RawMode:      c.cfg.RawMode,
 	}
 	obfsLabel := "Аудиозвонок (OPUS)"
 	if tp.ObfsMode == "video" {
@@ -184,7 +187,11 @@ func (c *Core) Start() (<-chan Event, error) {
 		dnsLabel = "doh-yandex"
 	}
 	log.Printf("[Основной] Хешей=%d, Потоков=%d", len(c.cfg.Hashes), n)
-	log.Printf("[СЕТЬ] Режим: VPN (WireGuard over VK TURN/DTLS)")
+	if c.cfg.RawMode {
+		log.Printf("[СЕТЬ] Режим: VPN (raw-IP, без WireGuard/DTLS)")
+	} else {
+		log.Printf("[СЕТЬ] Режим: VPN (WireGuard over VK TURN/DTLS)")
+	}
 	log.Printf("[СЕТЬ] DNS: %s", dnsLabel)
 	log.Printf("[СЕТЬ] Маскировка: %s", obfsLabel)
 	log.Printf("[КЛИЕНТ] Режим VK: %s", c.getVKAuthMode())
@@ -193,14 +200,17 @@ func (c *Core) Start() (<-chan Event, error) {
 		log.Printf("[ЯДРО] Транспорт TURN: TCP")
 	}
 
-	localConn, err := listenUDP(c.cfg.Listen)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("listen %s: %w", c.cfg.Listen, err)
-	}
-	if uc, ok := localConn.(*net.UDPConn); ok {
-		_ = uc.SetReadBuffer(socketBufSize)
-		_ = uc.SetWriteBuffer(socketBufSize)
+	var localConn net.PacketConn
+	if !c.cfg.RawMode {
+		localConn, err = listenUDP(c.cfg.Listen)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("listen %s: %w", c.cfg.Listen, err)
+		}
+		if uc, ok := localConn.(*net.UDPConn); ok {
+			_ = uc.SetReadBuffer(socketBufSize)
+			_ = uc.SetWriteBuffer(socketBufSize)
+		}
 	}
 
 	_, localPort, _ := net.SplitHostPort(c.cfg.Listen)
@@ -229,7 +239,12 @@ func (c *Core) Start() (<-chan Event, error) {
 		},
 	)
 
-	disp := NewDispatcher(ctx, localConn, stats)
+	var disp *Dispatcher
+	if c.cfg.RawMode {
+		disp = NewDispatcherPendingTUN(ctx, stats)
+	} else {
+		disp = NewDispatcher(ctx, localConn, stats)
+	}
 
 	configCh := make(chan string, 1)
 
@@ -237,6 +252,10 @@ func (c *Core) Start() (<-chan Event, error) {
 		select {
 		case rawConf, ok := <-configCh:
 			if !ok || rawConf == "" {
+				return
+			}
+			if strings.HasPrefix(rawConf, "RAWCONF:") {
+				c.attachRawTUN(disp, rawConf)
 				return
 			}
 			finalConf := patchWGConfig(rawConf, c.cfg.MTU)
@@ -251,7 +270,11 @@ func (c *Core) Start() (<-chan Event, error) {
 		defer close(c.events)
 		defer disp.Shutdown()
 		defer cancel()
-		defer func() { _ = localConn.Close() }()
+		defer func() {
+			if localConn != nil {
+				_ = localConn.Close()
+			}
+		}()
 
 		var wg sync.WaitGroup
 		workerIDCounter := 1
@@ -385,4 +408,46 @@ func normalizeObfsMode(mode string) string {
 	default:
 		return "audio"
 	}
+}
+
+func (c *Core) attachRawTUN(disp *Dispatcher, rawConf string) {
+	ip, dnsCSV, mtu, err := ParseRawConf(rawConf)
+	if err != nil {
+		log.Printf("[RAW] Некорректный RAWCONF: %v", err)
+		c.emit(Event{Type: EventError, Message: err.Error()})
+		return
+	}
+	if ip == "" {
+		log.Printf("[RAW] Сервер ещё не назначил IP")
+		return
+	}
+	iface := strings.TrimSpace(c.cfg.TunIface)
+	if iface == "" {
+		iface = "tun-wdtt"
+	}
+	if mtu <= 0 {
+		mtu = c.cfg.MTU
+	}
+	if mtu <= 0 {
+		mtu = 1240
+	}
+	f, err := openRawTUN(iface)
+	if err != nil {
+		log.Printf("[RAW] TUN: %v", err)
+		c.emit(Event{Type: EventError, Message: err.Error()})
+		return
+	}
+	if err := configureTUN(iface, ip, mtu); err != nil {
+		_ = f.Close()
+		log.Printf("[RAW] configure TUN: %v", err)
+		c.emit(Event{Type: EventError, Message: err.Error()})
+		return
+	}
+	disp.AttachTUN(f)
+	log.Printf("[RAW] TUN %s подключён (ip=%s mtu=%d)", iface, ip, mtu)
+	c.emit(Event{
+		Type: EventEvent,
+		Name: "raw_config",
+		Data: fmt.Sprintf("%s|%s|%d|%s", ip, dnsCSV, mtu, iface),
+	})
 }

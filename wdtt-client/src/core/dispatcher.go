@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -91,6 +92,8 @@ type WorkerSlot struct {
 
 type Dispatcher struct {
 	localConn    net.PacketConn
+	tunFile      *os.File
+	ready        chan struct{}
 	clientAddr   atomic.Pointer[net.Addr]
 	mu           sync.Mutex
 	workers      []*WorkerSlot
@@ -107,8 +110,11 @@ type Dispatcher struct {
 
 func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) *Dispatcher {
 	dctx, dcancel := context.WithCancel(ctx)
+	ready := make(chan struct{})
+	close(ready)
 	d := &Dispatcher{
 		localConn: localConn,
+		ready:     ready,
 		ReturnCh:  make(chan []byte, returnChBuf),
 		ctx:       dctx,
 		cancel:    dcancel,
@@ -121,9 +127,38 @@ func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) 
 	return d
 }
 
+// NewDispatcherPendingTUN ждёт AttachTUN — воркеры стартуют до RAWCONF.
+func NewDispatcherPendingTUN(ctx context.Context, stats *Stats) *Dispatcher {
+	dctx, dcancel := context.WithCancel(ctx)
+	d := &Dispatcher{
+		ready:    make(chan struct{}),
+		ReturnCh: make(chan []byte, returnChBuf),
+		ctx:      dctx,
+		cancel:   dcancel,
+		stats:    stats,
+	}
+	d.wg.Add(2)
+	go d.readLoop()
+	go d.writeLoop()
+	return d
+}
+
+func (d *Dispatcher) AttachTUN(f *os.File) {
+	d.tunFile = f
+	select {
+	case <-d.ready:
+	default:
+		close(d.ready)
+	}
+	log.Printf("[ДИСП] TUN подключён")
+}
+
 func (d *Dispatcher) Shutdown() {
 	d.cancel()
 	d.wg.Wait()
+	if d.tunFile != nil {
+		_ = d.tunFile.Close()
+	}
 }
 
 func (d *Dispatcher) Register(w *WorkerSlot) {
@@ -169,13 +204,26 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 func (d *Dispatcher) readLoop() {
 	defer d.wg.Done()
 
+	select {
+	case <-d.ctx.Done():
+		return
+	case <-d.ready:
+	}
+
 	buf := make([]byte, readBufSize)
 	for {
 		if err := d.ctx.Err(); err != nil {
 			return
 		}
 
-		n, addr, err := d.localConn.ReadFrom(buf)
+		var n int
+		var addr net.Addr
+		var err error
+		if d.tunFile != nil {
+			n, err = d.tunFile.Read(buf)
+		} else {
+			n, addr, err = d.localConn.ReadFrom(buf)
+		}
 		if err != nil {
 			if d.ctx.Err() != nil {
 				return
@@ -184,7 +232,9 @@ func (d *Dispatcher) readLoop() {
 			continue
 		}
 
-		d.clientAddr.Store(&addr)
+		if d.tunFile == nil {
+			d.clientAddr.Store(&addr)
+		}
 		atomic.AddInt64(&d.stats.TotalBytesUp, int64(n))
 
 		pkt := getPktBuf(n)
@@ -295,11 +345,26 @@ func (d *Dispatcher) readLoop() {
 func (d *Dispatcher) writeLoop() {
 	defer d.wg.Done()
 
+	select {
+	case <-d.ctx.Done():
+		return
+	case <-d.ready:
+	}
+
 	for {
 		select {
 		case <-d.ctx.Done():
 			return
 		case pkt := <-d.ReturnCh:
+			if d.tunFile != nil {
+				if _, err := d.tunFile.Write(pkt); err != nil && d.ctx.Err() != nil {
+					putPktBuf(pkt)
+					return
+				}
+				atomic.AddInt64(&d.stats.TotalBytesDown, int64(len(pkt)))
+				putPktBuf(pkt)
+				continue
+			}
 			addrPtr := d.clientAddr.Load()
 			if addrPtr == nil {
 				putPktBuf(pkt)

@@ -166,6 +166,60 @@ func (m *Manager) ApplyWithMode(conf string, turnIPs []string, mode RoutingMode,
 	return nil
 }
 
+// ApplyRawOverlay ставит обходные маршруты (TURN/VK/DNS/peer) и, в режиме
+// full, default через уже поднятый TUN. Интерфейс создаёт ядро, не WireGuard.
+func (m *Manager) ApplyRawOverlay(turnIPs []string, mode RoutingMode, uplinkIface, peerAddr string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mode = mode
+
+	for _, entry := range m.routes {
+		if strings.HasPrefix(entry, "dev:") {
+			_ = run("ip", "route", "del", strings.TrimPrefix(entry, "dev:"), "dev", m.iface)
+		} else {
+			_ = run("ip", "route", "del", entry)
+		}
+	}
+	m.routes = nil
+
+	var routes []string
+	gw, uplinkDev := gatewayForUplink(uplinkIface)
+	for _, ip := range turnIPs {
+		cidr := ip + "/32"
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
+		}
+	}
+	for _, cidr := range vkExcludeCIDRs {
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
+		}
+	}
+	for _, dns := range localDNSServers() {
+		cidr := dns + "/32"
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
+		}
+	}
+	if peerHost := parsePeerHost(peerAddr); peerHost != "" {
+		cidr := peerHost + "/32"
+		if addBypassRoute(cidr, gw, uplinkDev) {
+			routes = append(routes, cidr)
+		}
+	}
+	if mode == ModeFull {
+		for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+			if run("ip", "route", "replace", cidr, "dev", m.iface) == nil {
+				routes = append(routes, "dev:"+cidr)
+			} else if run("ip", "route", "add", cidr, "dev", m.iface) == nil {
+				routes = append(routes, "dev:"+cidr)
+			}
+		}
+	}
+	m.routes = routes
+	return nil
+}
+
 func (m *Manager) Teardown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -360,6 +360,7 @@ type TurnParams struct {
 	WrapKey      []byte // Password-derived WRAP key (32 bytes), nil = disabled
 	ObfsMode     string // audio (default) | video
 	TCPTransport bool   // true = TURN поверх TCP (когда UDP душат)
+	RawMode      bool   // сырые IP без WireGuard/DTLS (сервер -listen-raw)
 }
 
 // Credentials — учетные данные TURN

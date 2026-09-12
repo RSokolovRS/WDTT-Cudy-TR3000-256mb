@@ -7,6 +7,9 @@
 IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 IFACE="${IFACE:-wg-wdtt}"
 [ -n "$1" ] && [ "$1" != "apply" ] && [ "$1" != "--force-fw4" ] && IFACE="$1"
+if [ "$(uci -q get wdtt.globals.tunnel_mode 2>/dev/null)" = "raw" ] && [ "$IFACE" = "wg-wdtt" ]; then
+	IFACE="tun-wdtt"
+fi
 
 FORCE_FW4=0
 for a in "$@"; do

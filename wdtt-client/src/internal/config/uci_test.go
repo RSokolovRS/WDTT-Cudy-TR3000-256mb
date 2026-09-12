@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestSanitizeDeviceID(t *testing.T) {
 	cases := []struct {
@@ -51,6 +55,54 @@ func TestCollectHashesSlotsAndLegacy(t *testing.T) {
 	}
 	if got[0] != "aaa111" || got[1] != "bbb222" || got[2] != "ccc333" {
 		t.Fatalf("порядок/нормализация: %v", got)
+	}
+}
+
+func TestLoadTunnelModeRawRemapsIface(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wdtt")
+	src := `config globals 'globals'
+	option peer '203.0.113.10:56000'
+	option password 'secret'
+	option hash1 'aaa111'
+	option tunnel_mode 'raw'
+	option iface 'wg-wdtt'
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.IsRaw() {
+		t.Fatalf("ожидался RAW, получили %q", s.TunnelMode)
+	}
+	if s.Iface != "tun-wdtt" {
+		t.Fatalf("iface=%q, ожидалось tun-wdtt", s.Iface)
+	}
+}
+
+func TestLoadTunnelModeWGDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wdtt")
+	src := `config globals 'globals'
+	option peer '203.0.113.10:56000'
+	option password 'secret'
+	option hash1 'aaa111'
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.IsRaw() {
+		t.Fatal("без tunnel_mode должен быть WireGuard")
+	}
+	if s.Iface != "wg-wdtt" {
+		t.Fatalf("iface=%q", s.Iface)
 	}
 }
 

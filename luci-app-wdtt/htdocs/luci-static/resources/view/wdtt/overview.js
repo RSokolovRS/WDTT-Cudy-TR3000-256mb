@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — VK hash 1–4 + connect steps v3.17.0 */
+/* WDTT overview.js — RAW tunnel_mode + VK hash 1–4 v3.18.0 */
 'require view';
 'require ui';
 'require dom';
@@ -601,8 +601,14 @@ return view.extend({
 		o.placeholder = 'openwrt-<mac>';
 		o.rmempty = true;
 
+		o = s.option(form.ListValue, 'tunnel_mode', _('Транспорт'),
+			_('WireGuard — обычный путь (DTLS + wg-wdtt), работает с любым WDTT-сервером. RAW — сырые IP без WireGuard/DTLS, нужен qWDTT-сервер с -listen-raw. Обычный VPS (GETCONF+DTLS) в RAW не поднимется.'));
+		o.value('wg', _('WireGuard + DTLS (рекомендуется)'));
+		o.value('raw', _('RAW (без WireGuard, сервер -listen-raw)'));
+		o.default = 'wg';
+
 		o = s.option(form.ListValue, 'routing_mode', _('Режим туннеля'),
-			_('Podkop — WDTT только поднимает wg-wdtt, маршруты задаёт Podkop (sing-box). Выборочный — правила WDTT. Полный — весь трафик через WDTT.'));
+			_('Podkop — WDTT только поднимает интерфейс туннеля, маршруты задаёт Podkop (sing-box). Выборочный — правила WDTT. Полный — весь трафик через WDTT.'));
 		o.value('external', _('Podkop (sing-box) — рекомендуется'));
 		o.value('selective', _('Выборочный (правила WDTT)'));
 		o.value('full', _('Полный туннель'));
@@ -629,7 +635,8 @@ return view.extend({
 		o.placeholder = '192.168.1.100';
 		o.depends('routing_mode', 'selective');
 
-		o = s.option(form.Value, 'iface', _('Интерфейс WireGuard'));
+		o = s.option(form.Value, 'iface', _('Интерфейс туннеля'),
+			_('wg-wdtt в режиме WireGuard. В RAW демон сам поднимает tun-wdtt, это поле можно не менять.'));
 		o.default = 'wg-wdtt';
 		o.readonly = true;
 

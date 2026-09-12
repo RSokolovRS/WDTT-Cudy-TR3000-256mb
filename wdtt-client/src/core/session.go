@@ -212,11 +212,11 @@ func RunSession(
 
 	log.Printf("[СЕССИЯ #%d] Relay: %s", sessionID, relay.LocalAddr())
 
-	// Pipe для DTLS ↔ TURN relay
-	pipeA, pipeB := connutil.AsyncPacketPipe()
-
 	sessCtx, sessCancel := context.WithCancel(ctx)
 	defer sessCancel()
+
+	var pipeA, pipeB net.PacketConn
+	var activeConn net.Conn
 
 	// Keepalive goroutine (TURN binding request)
 	var sessionWg sync.WaitGroup
@@ -235,147 +235,180 @@ func RunSession(
 		}
 	}()
 
-	// Relay ↔ Pipe proxy (with RTP obfuscation)
 	var relayWg sync.WaitGroup
-	relayWg.Add(2)
-
 	useWrap := len(tp.WrapKey) == wrapKeyLen
 
-	// Initialize obfs config per session
-	var obfsCfg *ObfsConfig
-	var obfsWriteState *ObfsState
-	var wrapAEAD cipher.AEAD
-	if useWrap {
-		obfsCfg = NewObfsConfig(tp.ObfsMode)
-		obfsWriteState = NewObfsState()
-		var aeadErr error
-		wrapAEAD, aeadErr = getAEAD(tp.WrapKey)
-		if aeadErr != nil {
-			return false, fmt.Errorf("obfs aead: %w", aeadErr)
+	if tp.RawMode {
+		if !useWrap {
+			return false, fmt.Errorf("RAW-режим требует WRAP-ключ (пароль)")
 		}
-	}
-
-	stopRelay := context.AfterFunc(sessCtx, func() {
-		_ = relay.SetDeadline(time.Now())
-		_ = pipeA.SetDeadline(time.Now())
-	})
-	defer stopRelay()
-
-	// relay → pipeA (UNWRAP: strip RTP header + decrypt)
-	go func() {
-		defer relayWg.Done()
-		defer sessCancel()
-		// Max incoming: RTP header (12) + AEAD tag (16) + padding (video up to 60).
-		readBufLen := readBufSize + 120
-		buf := make([]byte, readBufLen)
-		plain := make([]byte, readBufSize)
-		for {
-			n, _, readErr := relay.ReadFrom(buf)
-			if readErr != nil {
-				return
-			}
-			payload := buf[:n]
-			if useWrap {
-				if !obfsIsRTPPacket(payload) {
-					log.Printf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
-					continue
-				}
-				m, wrapErr := obfsUnwrapPacketAEAD(wrapAEAD, payload, plain)
-				if wrapErr != nil {
-					log.Printf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
-					continue
-				}
-				payload = plain[:m]
-			}
-			if _, writeErr := pipeA.WriteTo(payload, peer); writeErr != nil {
-				return
-			}
+		direct, dirErr := newObfsDirectConn(relay, peer, tp.WrapKey, tp.ObfsMode)
+		if dirErr != nil {
+			return false, fmt.Errorf("RAW obfs: %w", dirErr)
 		}
-	}()
+		activeConn = direct
+		log.Printf("[ВОРКЕР #%d] [ПРЯМОЙ] Без DTLS, только RTP-obfs AEAD ✓", sessionID)
+	} else {
+		relayWg.Add(2)
 
-	// pipeA → relay (WRAP: add RTP header + encrypt, zero-alloc into txBuf)
-	go func() {
-		defer relayWg.Done()
-		defer sessCancel()
-		b := make([]byte, readBufSize)
-		var txBuf []byte
-		if useWrap && obfsCfg != nil {
-			txBuf = make([]byte, obfsWrapWireLen(readBufSize, obfsCfg))
-		}
-		for {
-			n, _, readErr := pipeA.ReadFrom(b)
-			if readErr != nil {
-				return
-			}
-			out := b[:n]
-			if useWrap {
-				if obfsCfg != nil && obfsWriteState != nil && wrapAEAD != nil {
-					wn, wrapErr := obfsWrapPacketInto(txBuf, wrapAEAD, out, obfsCfg, obfsWriteState)
-					if wrapErr != nil {
-						log.Printf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
-						return
-					}
-					out = txBuf[:wn]
-				}
-			}
-			if _, writeErr := relay.WriteTo(out, peer); writeErr != nil {
-				return
-			}
-		}
-	}()
-
-	// DTLS с поддержкой Connection ID (без SNI)
-	cert, err := selfsign.GenerateSelfSigned()
-	if err != nil {
-		return false, fmt.Errorf("генерация сертификата: %w", err)
-	}
-
-	// Acquire handshake semaphore
-	select {
-	case handshakeSem <- struct{}{}:
-	case <-sessCtx.Done():
-		return false, sessCtx.Err()
-	}
-
-	dtlsCfg := &dtls.Config{
-		Certificates:          []tls.Certificate{cert},
-		InsecureSkipVerify:    true,
-		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
-		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-		ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
-		// No ServerName (SNI) — less detectable by DPI
-	}
-
-	dtlsConn, err := dtls.Client(pipeB, peer, dtlsCfg)
-	if err != nil {
-		<-handshakeSem
-		return false, fmt.Errorf("DTLS клиент: %w", err)
-	}
-	defer dtlsConn.Close()
-
-	hctx, hcancel := context.WithTimeout(sessCtx, 50*time.Second)
-	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
-	err = dtlsConn.HandshakeContext(hctx)
-	hcancel()
-	<-handshakeSem // RELEASE SEMAPHORE IMMEDIATELY AFTER HANDSHAKE
-
-	if err != nil {
+		// Initialize obfs config per session
+		var obfsCfg *ObfsConfig
+		var obfsWriteState *ObfsState
+		var wrapAEAD cipher.AEAD
 		if useWrap {
-			errStr := strings.ToLower(err.Error())
-			if strings.Contains(errStr, "deadline") || strings.Contains(errStr, "timeout") {
-				return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout, пароль/WRAP не подтверждён")
+			obfsCfg = NewObfsConfig(tp.ObfsMode)
+			obfsWriteState = NewObfsState()
+			var aeadErr error
+			wrapAEAD, aeadErr = getAEAD(tp.WrapKey)
+			if aeadErr != nil {
+				return false, fmt.Errorf("obfs aead: %w", aeadErr)
 			}
 		}
-		return false, fmt.Errorf("DTLS хендшейк: %w", err)
+
+		pipeA, pipeB = connutil.AsyncPacketPipe()
+
+		stopRelay := context.AfterFunc(sessCtx, func() {
+			_ = relay.SetDeadline(time.Now())
+			_ = pipeA.SetDeadline(time.Now())
+		})
+		defer stopRelay()
+
+		// relay → pipeA (UNWRAP: strip RTP header + decrypt)
+		go func() {
+			defer relayWg.Done()
+			defer sessCancel()
+			// Max incoming: RTP header (12) + AEAD tag (16) + padding (video up to 60).
+			readBufLen := readBufSize + 120
+			buf := make([]byte, readBufLen)
+			plain := make([]byte, readBufSize)
+			for {
+				n, _, readErr := relay.ReadFrom(buf)
+				if readErr != nil {
+					return
+				}
+				payload := buf[:n]
+				if useWrap {
+					if !obfsIsRTPPacket(payload) {
+						log.Printf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
+						continue
+					}
+					m, wrapErr := obfsUnwrapPacketAEAD(wrapAEAD, payload, plain)
+					if wrapErr != nil {
+						log.Printf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
+						continue
+					}
+					payload = plain[:m]
+				}
+				if _, writeErr := pipeA.WriteTo(payload, peer); writeErr != nil {
+					return
+				}
+			}
+		}()
+
+		// pipeA → relay (WRAP: add RTP header + encrypt, zero-alloc into txBuf)
+		go func() {
+			defer relayWg.Done()
+			defer sessCancel()
+			b := make([]byte, readBufSize)
+			var txBuf []byte
+			if useWrap && obfsCfg != nil {
+				txBuf = make([]byte, obfsWrapWireLen(readBufSize, obfsCfg))
+			}
+			for {
+				n, _, readErr := pipeA.ReadFrom(b)
+				if readErr != nil {
+					return
+				}
+				out := b[:n]
+				if useWrap {
+					if obfsCfg != nil && obfsWriteState != nil && wrapAEAD != nil {
+						wn, wrapErr := obfsWrapPacketInto(txBuf, wrapAEAD, out, obfsCfg, obfsWriteState)
+						if wrapErr != nil {
+							log.Printf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
+							return
+						}
+						out = txBuf[:wn]
+					}
+				}
+				if _, writeErr := relay.WriteTo(out, peer); writeErr != nil {
+					return
+				}
+			}
+		}()
+
+		// DTLS с поддержкой Connection ID (без SNI)
+		cert, err := selfsign.GenerateSelfSigned()
+		if err != nil {
+			return false, fmt.Errorf("генерация сертификата: %w", err)
+		}
+
+		// Acquire handshake semaphore
+		select {
+		case handshakeSem <- struct{}{}:
+		case <-sessCtx.Done():
+			return false, sessCtx.Err()
+		}
+
+		dtlsCfg := &dtls.Config{
+			Certificates:          []tls.Certificate{cert},
+			InsecureSkipVerify:    true,
+			ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
+			CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+			ConnectionIDGenerator: dtls.OnlySendCIDGenerator(),
+			// No ServerName (SNI) — less detectable by DPI
+		}
+
+		dtlsConn, err := dtls.Client(pipeB, peer, dtlsCfg)
+		if err != nil {
+			<-handshakeSem
+			return false, fmt.Errorf("DTLS клиент: %w", err)
+		}
+		defer dtlsConn.Close()
+
+		hctx, hcancel := context.WithTimeout(sessCtx, 50*time.Second)
+		log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
+		err = dtlsConn.HandshakeContext(hctx)
+		hcancel()
+		<-handshakeSem // RELEASE SEMAPHORE IMMEDIATELY AFTER HANDSHAKE
+
+		if err != nil {
+			if useWrap {
+				errStr := strings.ToLower(err.Error())
+				if strings.Contains(errStr, "deadline") || strings.Contains(errStr, "timeout") {
+					return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout, пароль/WRAP не подтверждён")
+				}
+			}
+			return false, fmt.Errorf("DTLS хендшейк: %w", err)
+		}
+		log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
+		activeConn = dtlsConn
 	}
-	log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
 
 	atomic.AddInt32(&stats.ActiveConnections, 1)
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
 	// Запрос конфига
-	if getConfig && configCh != nil {
-		conf, confErr := RequestConfig(dtlsConn, localPort, deviceID, password)
+	if getConfig && configCh != nil && tp.RawMode {
+		ip, dnsCSV, mtu, confErr := RequestRawConfig(activeConn, deviceID, password)
+		if confErr != nil {
+			if strings.Contains(confErr.Error(), "FATAL_AUTH") {
+				return false, confErr
+			}
+			log.Printf("[ВОРКЕР #%d] Ошибка RAW-конфига: %v", sessionID, confErr)
+		} else if ip != "" {
+			conf := fmt.Sprintf("RAWCONF:%s|%s|%d", ip, dnsCSV, mtu)
+			select {
+			case configCh <- conf:
+				configDelivered = true
+				log.Printf("[ВОРКЕР #%d] RAW-конфиг получен (ip=%s)", sessionID, ip)
+			default:
+				configDelivered = true
+			}
+		} else {
+			log.Printf("[ВОРКЕР #%d] Сервер ещё не назначил raw IP, повторим позже", sessionID)
+		}
+	} else if getConfig && configCh != nil {
+		conf, confErr := RequestConfig(activeConn, localPort, deviceID, password)
 		if confErr != nil {
 			errStr := confErr.Error()
 			if strings.Contains(errStr, "FATAL_AUTH") {
@@ -394,7 +427,7 @@ func RunSession(
 		} else {
 			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал WireGuard-конфиг, повторим позже", sessionID)
 		}
-	} else if authErr := SendAuth(dtlsConn, deviceID, password); authErr != nil {
+	} else if authErr := SendAuth(activeConn, deviceID, password); authErr != nil {
 		log.Printf("[ВОРКЕР #%d] Ошибка авторизации: %v", sessionID, authErr)
 	}
 
@@ -415,11 +448,11 @@ func RunSession(
 	sessionErrCh := make(chan error, 1)
 
 	stopDTLS := context.AfterFunc(sessCtx, func() {
-		_ = dtlsConn.SetDeadline(time.Now())
+		_ = activeConn.SetDeadline(time.Now())
 	})
 	defer stopDTLS()
 
-	// DTLS Keepalive: prevents TURN allocation timeout and DTLS idle disconnect
+	// Keepalive: не даёт TURN allocation и каналу простаивать
 	go func() {
 		defer proxyWg.Done()
 		t := time.NewTicker(keepaliveInterval)
@@ -430,23 +463,23 @@ func RunSession(
 			case <-sessCtx.Done():
 				return
 			case <-t.C:
-				_ = dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				if _, err := dtlsConn.Write(ping); err != nil {
+				_ = activeConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if _, err := activeConn.Write(ping); err != nil {
 					return
 				}
 			}
 		}
 	}()
 
-	// Writer: dispatcher → DTLS. PrioCh (мелкие пакеты, в основном TCP ACK)
+	// Writer: dispatcher → туннель. PrioCh (мелкие пакеты, в основном TCP ACK)
 	// всегда обгоняет SendCh, иначе ACK ждёт весь chunk данных перед собой.
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
 
 		writePkt := func(pkt []byte) bool {
-			_ = dtlsConn.SetWriteDeadline(time.Now().Add(sessionReadTimeout))
-			_, writeErr := dtlsConn.Write(pkt)
+			_ = activeConn.SetWriteDeadline(time.Now().Add(sessionReadTimeout))
+			_, writeErr := activeConn.Write(pkt)
 			putPktBuf(pkt)
 			if writeErr != nil {
 				log.Printf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
@@ -494,14 +527,14 @@ func RunSession(
 		}
 	}()
 
-	// Reader: DTLS → dispatcher
+	// Reader: туннель → dispatcher
 	go func() {
 		defer proxyWg.Done()
 		defer sessCancel()
 		for {
 			pkt := getPktBuf(2048)
-			_ = dtlsConn.SetReadDeadline(time.Now().Add(sessionReadTimeout))
-			n, readErr := dtlsConn.Read(pkt)
+			_ = activeConn.SetReadDeadline(time.Now().Add(sessionReadTimeout))
+			n, readErr := activeConn.Read(pkt)
 			if readErr != nil {
 				putPktBuf(pkt)
 				if sessCtx.Err() != nil {
@@ -538,8 +571,12 @@ func RunSession(
 	sessCancel()
 	relayWg.Wait()
 	sessionWg.Wait()
-	_ = pipeA.Close()
-	_ = pipeB.Close()
+	if pipeA != nil {
+		_ = pipeA.Close()
+	}
+	if pipeB != nil {
+		_ = pipeB.Close()
+	}
 	log.Printf("[СЕССИЯ #%d] Завершена", sessionID)
 	select {
 	case sessionErr := <-sessionErrCh:

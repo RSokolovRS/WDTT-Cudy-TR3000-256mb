@@ -3,6 +3,9 @@
 
 IFACE="$(uci -q get wdtt.globals.iface 2>/dev/null)"
 IFACE="${IFACE:-wg-wdtt}"
+if [ "$(uci -q get wdtt.globals.tunnel_mode 2>/dev/null)" = "raw" ] && [ "$IFACE" = "wg-wdtt" ]; then
+	IFACE="tun-wdtt"
+fi
 STATE_DIR="/var/run/wdtt"
 
 log() { logger -t wdtt-full-tunnel "$*"; }

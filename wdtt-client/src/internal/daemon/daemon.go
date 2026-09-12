@@ -124,6 +124,8 @@ func (d *Daemon) runWithConfig(ctx context.Context, cfg *config.Settings) error 
 		MTU:           cfg.MTU,
 		GoDNS:         cfg.GoDNS,
 		TurnTransport: cfg.TurnTransport,
+		RawMode:       cfg.IsRaw(),
+		TunIface:      cfg.Iface,
 	}
 
 	c := core.New(coreCfg)
@@ -177,6 +179,8 @@ func (d *Daemon) handleEvent(ev core.Event) {
 		}
 	case core.EventEvent:
 		switch ev.Name {
+		case "raw_config":
+			d.applyRawConfig(ev.Data)
 		case "wg_config":
 			mode := wg.ModeSelective
 			if d.cfg != nil {
@@ -227,6 +231,41 @@ func (d *Daemon) handleEvent(ev core.Event) {
 	case core.EventError:
 		d.status.SetError(fmt.Errorf("%s", ev.Message))
 	}
+}
+
+func (d *Daemon) applyRawConfig(data string) {
+	parts := strings.Split(data, "|")
+	ip := ""
+	if len(parts) > 0 {
+		ip = parts[0]
+	}
+	mode := wg.ModeSelective
+	uplink, peer := "", ""
+	if d.cfg != nil {
+		switch {
+		case d.cfg.IsFull():
+			mode = wg.ModeFull
+		case d.cfg.IsExternal():
+			mode = wg.ModeExternal
+		}
+		uplink = d.cfg.UplinkIface
+		peer = d.cfg.Peer
+	}
+	if err := d.wg.ApplyRawOverlay(d.turnIPs(), mode, uplink, peer); err != nil {
+		log.Printf("[WDTT] RAW overlay failed: %v", err)
+		d.status.SetError(err)
+		return
+	}
+	var routingErr error
+	if err := routing.EnsureWithConfig(d.wg.Iface(), d.cfg); err != nil {
+		log.Printf("[WDTT] datapath ensure failed: %v", err)
+		routingErr = err
+	}
+	d.status.SetWGApplied(true)
+	d.status.SetState("connected")
+	d.status.SetError(routingErr)
+	log.Printf("[WDTT] RAW %s up (ip=%s mode=%s)", d.wg.Iface(), ip, mode)
+	d.status.AppendStep(fmt.Sprintf("[RAW] Туннель %s поднят (ip=%s mode=%s)", d.wg.Iface(), ip, mode))
 }
 
 func (d *Daemon) turnIPs() []string {
@@ -305,8 +344,11 @@ func isConnectStep(msg string) bool {
 		"[TURN] Креды",
 		"Креды OK",
 		"[WG]",
+		"[RAW]",
+		"[ПРЯМОЙ]",
 		"WireGuard",
 		"Конфиг получен",
+		"RAW-конфиг получен",
 		"device_id:",
 	}
 	for _, m := range markers {

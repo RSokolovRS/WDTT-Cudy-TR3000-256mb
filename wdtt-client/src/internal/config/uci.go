@@ -51,9 +51,18 @@ type Settings struct {
 	Iface              string
 	UplinkIface        string // auto | wan | wwan | network section / device
 	RoutingMode        RoutingMode
+	TunnelMode         TunnelMode
 	RoutingExcludedIPs []string
 	Rules              []Rule
 }
+
+// TunnelMode — транспорт до VPS: WireGuard+DTLS или сырой IP (qWDTT -listen-raw).
+type TunnelMode string
+
+const (
+	TunnelWG  TunnelMode = "wg"
+	TunnelRaw TunnelMode = "raw"
+)
 
 type uciSection struct {
 	typ     string
@@ -107,7 +116,14 @@ func Load(path string) (*Settings, error) {
 		DeviceID:      defaultString(g["device_id"], ""),
 		Iface:         defaultString(g["iface"], "wg-wdtt"),
 		UplinkIface:   defaultString(g["uplink_iface"], "auto"),
+		TunnelMode:    TunnelWG,
 		Rules:         rules,
+	}
+	if strings.EqualFold(strings.TrimSpace(g["tunnel_mode"]), "raw") {
+		s.TunnelMode = TunnelRaw
+		if s.Iface == "" || s.Iface == "wg-wdtt" {
+			s.Iface = "tun-wdtt"
+		}
 	}
 
 	// routing_mode: selective | full | external (Podkop/PBR)
@@ -244,9 +260,17 @@ func (s *Settings) Validate() error {
 		s.MTU = 1240
 	}
 	if s.Iface == "" {
-		s.Iface = "wg-wdtt"
+		if s.TunnelMode == TunnelRaw {
+			s.Iface = "tun-wdtt"
+		} else {
+			s.Iface = "wg-wdtt"
+		}
 	}
 	return nil
+}
+
+func (s *Settings) IsRaw() bool {
+	return s.TunnelMode == TunnelRaw
 }
 
 func (s *Settings) IsSelective() bool {

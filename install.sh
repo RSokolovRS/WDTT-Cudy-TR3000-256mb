@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.17.0"
+WDTT_INSTALL_VERSION="3.18.0"
 WDTT_ROUTING_VERSION="3.13.2"
-WDTT_BIN_TAG="v3.17.0"
+WDTT_BIN_TAG="v3.18.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -28,7 +28,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.17.0/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.18.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -726,6 +726,7 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.obfs_mode 2>/dev/null > "$f/obfs_mode"
 	uci -q get wdtt.globals.go_dns 2>/dev/null > "$f/go_dns"
 	uci -q get wdtt.globals.turn_transport 2>/dev/null > "$f/turn_transport"
+	uci -q get wdtt.globals.tunnel_mode 2>/dev/null > "$f/tunnel_mode"
 	# device_id сохраняем обязательно: сервер привязывает к нему пароль, и новый
 	# ID после переустановки получит DENIED:device_mismatch
 	uci -q get wdtt.globals.device_id 2>/dev/null > "$f/device_id"
@@ -746,7 +747,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes hash1 hash2 hash3 hash4 enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport device_id workers routing_mode uplink_iface; do
+	for v in peer password hashes hash1 hash2 hash3 hash4 enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport tunnel_mode device_id workers routing_mode uplink_iface; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"
@@ -974,6 +975,16 @@ install_dependencies() {
 
 	ensure_dnsmasq_full || optional_failed=1
 
+	# RAW-режим (tunnel_mode=raw) — /dev/net/tun; без модуля WG-путь не страдает
+	if pkg_is_installed kmod-tun || [ -e /dev/net/tun ]; then
+		msg "  OK: kmod-tun"
+	elif apk_install_one kmod-tun; then
+		msg "  installed: kmod-tun"
+	else
+		warn "  skip: kmod-tun (нужен только для RAW: apk add kmod-tun)"
+		optional_failed=1
+	fi
+
 	# Selective routing: nft (OpenWrt 25 / fw4)
 	for pkg in nftables kmod-nft-core kmod-nft-nat ca-bundle; do
 		if pkg_is_installed "$pkg"; then
@@ -1066,6 +1077,8 @@ post_install() {
 			|| uci -q set wdtt.globals.go_dns='doh-yandex'
 		uci -q get wdtt.globals.turn_transport >/dev/null 2>&1 \
 			|| uci -q set wdtt.globals.turn_transport='udp'
+		uci -q get wdtt.globals.tunnel_mode >/dev/null 2>&1 \
+			|| uci -q set wdtt.globals.tunnel_mode='wg'
 		uci -q commit wdtt 2>/dev/null
 	fi
 
