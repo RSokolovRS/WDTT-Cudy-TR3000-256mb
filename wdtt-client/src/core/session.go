@@ -117,6 +117,7 @@ func RunSession(
 	creds *Credentials,
 	deviceID, password string,
 	stats *Stats,
+	allocateGate <-chan time.Time,
 ) (bool, error) {
 	configDelivered := false
 
@@ -180,6 +181,14 @@ func RunSession(
 
 	if err = tc.Listen(); err != nil {
 		return false, fmt.Errorf("TURN Listen: %w", err)
+	}
+
+	if allocateGate != nil {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-allocateGate:
+		}
 	}
 
 	relay, err := tc.Allocate()
@@ -403,6 +412,7 @@ func RunSession(
 	// Proxy DTLS ↔ Dispatcher
 	var proxyWg sync.WaitGroup
 	proxyWg.Add(3) // +1 for keepalive goroutine
+	sessionErrCh := make(chan error, 1)
 
 	stopDTLS := context.AfterFunc(sessCtx, func() {
 		_ = dtlsConn.SetDeadline(time.Now())
@@ -440,6 +450,10 @@ func RunSession(
 			putPktBuf(pkt)
 			if writeErr != nil {
 				log.Printf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
+				select {
+				case sessionErrCh <- fmt.Errorf("transport writer: %w", writeErr):
+				default:
+				}
 				return false
 			}
 			return true
@@ -497,6 +511,10 @@ func RunSession(
 					continue
 				}
 				log.Printf("[ВОРКЕР #%d] Ошибка Reader: %v", sessionID, readErr)
+				select {
+				case sessionErrCh <- fmt.Errorf("transport reader: %w", readErr):
+				default:
+				}
 				return
 			}
 
@@ -523,5 +541,10 @@ func RunSession(
 	_ = pipeA.Close()
 	_ = pipeB.Close()
 	log.Printf("[СЕССИЯ #%d] Завершена", sessionID)
+	select {
+	case sessionErr := <-sessionErrCh:
+		return configDelivered, sessionErr
+	default:
+	}
 	return configDelivered, nil
 }

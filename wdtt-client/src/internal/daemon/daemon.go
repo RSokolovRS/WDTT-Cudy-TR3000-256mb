@@ -172,6 +172,9 @@ func (d *Daemon) handleEvent(ev core.Event) {
 	case core.EventLog:
 		line := fmt.Sprintf("[%s] %s", ev.Level, ev.Message)
 		d.status.AppendLog(line)
+		if isConnectStep(ev.Message) {
+			d.status.AppendStep(ev.Message)
+		}
 	case core.EventEvent:
 		switch ev.Name {
 		case "wg_config":
@@ -204,6 +207,7 @@ func (d *Daemon) handleEvent(ev core.Event) {
 				d.status.SetState("connected")
 				d.status.SetError(routingErr)
 				log.Printf("[WDTT] WireGuard %s up (mode=%s)", d.wg.Iface(), mode)
+				d.status.AppendStep(fmt.Sprintf("[WG] Туннель %s поднят (mode=%s)", d.wg.Iface(), mode))
 			}
 		case "captcha_required":
 			parts := strings.SplitN(ev.Data, "|", 3)
@@ -276,8 +280,41 @@ func (w *statusLogWriter) Write(p []byte) (int, error) {
 	msg := strings.TrimRight(string(p), "\n")
 	if msg != "" {
 		w.mgr.AppendLog(msg)
+		if isConnectStep(msg) {
+			w.mgr.AppendStep(stripLogPrefix(msg))
+		}
 	}
 	return len(p), nil
+}
+
+func stripLogPrefix(msg string) string {
+	// log.Ldate|Ltime|Lmicroseconds → "2006/01/02 15:04:05.000000 msg"
+	if i := strings.Index(msg, "["); i > 0 && i < 32 {
+		return strings.TrimSpace(msg[i:])
+	}
+	return msg
+}
+
+func isConnectStep(msg string) bool {
+	markers := []string{
+		"[Основной]",
+		"[СЕТЬ]",
+		"[КЛИЕНТ]",
+		"[WRAP]",
+		"[ЯДРО] Транспорт",
+		"[TURN] Креды",
+		"Креды OK",
+		"[WG]",
+		"WireGuard",
+		"Конфиг получен",
+		"device_id:",
+	}
+	for _, m := range markers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // RunForeground — точка входа для procd.

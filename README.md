@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.16.2 (обязательно — стабильный device_id + все 9 воркеров)
+### Рабочие ссылки v3.17.0 (VK-хеши 1–4 + ход подключения + быстрый старт)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.16.2+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.17.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -491,6 +491,29 @@ LuCI → **Транспорт TURN** / UCI `wdtt.globals.turn_transport`:
 uci set wdtt.globals.turn_transport='tcp'   # udp (по умолчанию) | tcp
 uci commit wdtt && /etc/init.d/wdtt restart
 ```
+
+## VK-хеши 1–4 и ход подключения (v3.17.0)
+
+В LuCI четыре отдельных поля **VK-хеш 1…4** — как в qWDTT (один хеш = одна группа из 9 потоков). Старое поле `hashes` по-прежнему пишется автоматически (через запятую) и читается демоном вместе с `hash1`…`hash4`.
+
+При 4 хешах ставьте **36 потоков**, чтобы у каждой ссылки была своя группа. Один хеш и 12 потоков округлятся до 9.
+
+Блок **«Ход подключения»** повторяет лог старта qWDTT:
+
+```
+[Основной] Хешей=2, Потоков=18
+[СЕТЬ] Режим: VPN (WireGuard over VK TURN/DTLS)
+[СЕТЬ] DNS: doh-yandex
+[СЕТЬ] Маскировка: Аудиозвонок (OPUS)
+[КЛИЕНТ] Режим VK: vkcalls
+[WRAP] Ключ выведен из пароля, RTP AEAD активен
+[ГРУППА #1] Креды OK …
+[WG] Туннель wg-wdtt поднят
+```
+
+На OpenWRT нет raw-IP: трафик идёт **WireGuard + DTLS**, а не «VPN (raw-IP, без WireGuard)» как на Android.
+
+Из qWDTT 1.4.3 также перенесены быстрый старт воркеров (75 мс stagger, эстафета групп ~0.5 с) и быстрый reconnect при EOF / broken pipe.
 
 ## ID устройства (device_id, v3.16.2)
 

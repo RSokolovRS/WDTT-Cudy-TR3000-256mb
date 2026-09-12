@@ -175,6 +175,20 @@ func (c *Core) Start() (<-chan Event, error) {
 		ObfsMode:     normalizeObfsMode(c.cfg.ObfsMode),
 		TCPTransport: strings.EqualFold(strings.TrimSpace(c.cfg.TurnTransport), "tcp"),
 	}
+	obfsLabel := "Аудиозвонок (OPUS)"
+	if tp.ObfsMode == "video" {
+		obfsLabel = "Видеозвонок (H264)"
+	}
+	dnsLabel := strings.TrimSpace(c.cfg.GoDNS)
+	if dnsLabel == "" {
+		dnsLabel = "doh-yandex"
+	}
+	log.Printf("[Основной] Хешей=%d, Потоков=%d", len(c.cfg.Hashes), n)
+	log.Printf("[СЕТЬ] Режим: VPN (WireGuard over VK TURN/DTLS)")
+	log.Printf("[СЕТЬ] DNS: %s", dnsLabel)
+	log.Printf("[СЕТЬ] Маскировка: %s", obfsLabel)
+	log.Printf("[КЛИЕНТ] Режим VK: %s", c.getVKAuthMode())
+	log.Printf("[WRAP] Ключ выведен из пароля, RTP AEAD активен")
 	if tp.TCPTransport {
 		log.Printf("[ЯДРО] Транспорт TURN: TCP")
 	}

@@ -11,7 +11,7 @@ CLEAN_ARG=""
 [ "$2" = "--clean" ] && CLEAN_ARG="--clean"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="/tmp/wdtt-pc-install"
-VERSION="3.16.2"
+VERSION="3.17.0"
 REPO="https://github.com/RSokolovRS/WDTT-Cudy-TR3000-256mb"
 PIN="17d7a10"
 MIN_BIN_SIZE=1048576

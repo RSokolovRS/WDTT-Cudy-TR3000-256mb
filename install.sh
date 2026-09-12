@@ -15,9 +15,9 @@
 # Не прерываем установку при ошибках apk (обрабатываем вручную)
 set +e
 
-WDTT_INSTALL_VERSION="3.16.2"
+WDTT_INSTALL_VERSION="3.17.0"
 WDTT_ROUTING_VERSION="3.13.2"
-WDTT_BIN_TAG="v3.16.2"
+WDTT_BIN_TAG="v3.17.0"
 
 GITHUB_REPO="RSokolovRS/WDTT-Cudy-TR3000-256mb"
 GITHUB_BRANCH="main"
@@ -28,7 +28,7 @@ RAW_PIN="https://raw.githubusercontent.com/${GITHUB_REPO}/${REPO_REF}"
 JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${GITHUB_BRANCH}"
 JSDELIVR_PIN="https://cdn.jsdelivr.net/gh/${GITHUB_REPO}@${REPO_REF}"
 RELEASE_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.16.2/wdttd-linux-arm64"
+RELEASE_BIN_URL="https://github.com/${GITHUB_REPO}/releases/download/v3.17.0/wdttd-linux-arm64"
 DOWNLOAD_DIR="/tmp/wdtt-install"
 SECRETS_BACKUP="/tmp/wdtt-secrets-backup"
 COUNT=3
@@ -716,6 +716,10 @@ backup_wdtt_secrets() {
 	uci -q get wdtt.globals.peer 2>/dev/null > "$f/peer"
 	uci -q get wdtt.globals.password 2>/dev/null > "$f/password"
 	uci -q get wdtt.globals.hashes 2>/dev/null > "$f/hashes"
+	uci -q get wdtt.globals.hash1 2>/dev/null > "$f/hash1"
+	uci -q get wdtt.globals.hash2 2>/dev/null > "$f/hash2"
+	uci -q get wdtt.globals.hash3 2>/dev/null > "$f/hash3"
+	uci -q get wdtt.globals.hash4 2>/dev/null > "$f/hash4"
 	uci -q get wdtt.globals.enabled 2>/dev/null > "$f/enabled"
 	uci -q get wdtt.globals.captcha_mode 2>/dev/null > "$f/captcha_mode"
 	uci -q get wdtt.globals.vk_auth_mode 2>/dev/null > "$f/vk_auth_mode"
@@ -742,7 +746,7 @@ restore_wdtt_secrets() {
 	[ -d "$f" ] || return 0
 	[ -f /etc/config/wdtt ] || return 0
 
-	for v in peer password hashes enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport device_id workers routing_mode uplink_iface; do
+	for v in peer password hashes hash1 hash2 hash3 hash4 enabled captcha_mode vk_auth_mode obfs_mode go_dns turn_transport device_id workers routing_mode uplink_iface; do
 		[ -f "$f/$v" ] || continue
 		[ -s "$f/$v" ] || continue
 		val="$(cat "$f/$v")"

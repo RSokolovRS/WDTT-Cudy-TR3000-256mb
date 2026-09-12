@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,21 +15,23 @@ const (
 	StatusFile  = "status.json"
 	LogFile     = "wdtt.log"
 	MaxLogLines = 500
+	MaxSteps    = 40
 )
 
 // Snapshot — состояние демона для LuCI / ubus.
 type Snapshot struct {
-	Running      bool      `json:"running"`
-	State        string    `json:"state"`
-	RxBytes      int64     `json:"rx_bytes"`
-	TxBytes      int64     `json:"tx_bytes"`
-	Workers      int32     `json:"workers"`
-	WGApplied    bool      `json:"wg_applied"`
-	Captcha      *Captcha  `json:"captcha,omitempty"`
-	LastError    string    `json:"last_error,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	UptimeSec    int64     `json:"uptime_sec"`
-	Version      string    `json:"version"`
+	Running   bool      `json:"running"`
+	State     string    `json:"state"`
+	RxBytes   int64     `json:"rx_bytes"`
+	TxBytes   int64     `json:"tx_bytes"`
+	Workers   int32     `json:"workers"`
+	WGApplied bool      `json:"wg_applied"`
+	Captcha   *Captcha  `json:"captcha,omitempty"`
+	LastError string    `json:"last_error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UptimeSec int64     `json:"uptime_sec"`
+	Version   string    `json:"version"`
+	Steps     []string  `json:"steps,omitempty"`
 }
 
 type Captcha struct {
@@ -69,6 +72,7 @@ func (m *Manager) SetRunning(running bool) {
 	if running {
 		m.startedAt = time.Now()
 		m.snap.State = "starting"
+		m.snap.Steps = nil
 	} else {
 		m.snap.State = "stopped"
 		m.snap.Workers = 0
@@ -117,6 +121,23 @@ func (m *Manager) SetCaptcha(c *Captcha) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.snap.Captcha = c
+	m.persistLocked()
+}
+
+func (m *Manager) AppendStep(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n := len(m.snap.Steps); n > 0 && m.snap.Steps[n-1] == line {
+		return
+	}
+	m.snap.Steps = append(m.snap.Steps, line)
+	if len(m.snap.Steps) > MaxSteps {
+		m.snap.Steps = m.snap.Steps[len(m.snap.Steps)-MaxSteps:]
+	}
 	m.persistLocked()
 }
 

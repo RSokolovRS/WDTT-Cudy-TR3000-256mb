@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — import URI via RPC + TURN transport + device_id v3.16.2 */
+/* WDTT overview.js — VK hash 1–4 + connect steps v3.17.0 */
 'require view';
 'require ui';
 'require dom';
@@ -117,7 +117,7 @@ function parseWdttImport(raw) {
 			peer: ip + ':' + dtls,
 			password: pass,
 			hashes: hash,
-			workers: '16',
+			workers: '18',
 			listen: '127.0.0.1:' + localPort
 		};
 	}
@@ -180,6 +180,66 @@ function parseWdttImport(raw) {
 	}
 
 	throw new Error(_('Неизвестный формат. Ожидается wdtt://, qwdtt://config?... или JSON'));
+}
+
+function splitHashList(raw) {
+	return String(raw || '').split(/[,;|\s]+/).map(function(h) {
+		return String(h || '').trim();
+	}).filter(Boolean);
+}
+
+function promoteHashesToSlots() {
+	var have = false;
+	var i;
+	for (i = 1; i <= 4; i++) {
+		if (String(uci.get('wdtt', 'globals', 'hash' + i) || '').trim()) {
+			have = true;
+			break;
+		}
+	}
+	if (!have) {
+		var parts = splitHashList(uci.get('wdtt', 'globals', 'hashes') || '');
+		for (i = 0; i < 4; i++)
+			uci.set('wdtt', 'globals', 'hash' + (i + 1), parts[i] || '');
+	}
+}
+
+function joinHashSlots() {
+	var parts = [];
+	for (var i = 1; i <= 4; i++) {
+		var v = String(uci.get('wdtt', 'globals', 'hash' + i) || '').trim();
+		if (v)
+			parts.push(v);
+	}
+	uci.set('wdtt', 'globals', 'hashes', parts.join(','));
+	return parts;
+}
+
+function applyImportedHashes(raw) {
+	var parts = splitHashList(raw);
+	for (var i = 0; i < 4; i++) {
+		var val = parts[i] || '';
+		uci.set('wdtt', 'globals', 'hash' + (i + 1), val);
+		syncGlobalsFormField('hash' + (i + 1), val);
+	}
+	uci.set('wdtt', 'globals', 'hashes', parts.join(','));
+}
+
+function formatConnectSteps(st, logLines) {
+	var steps = (st && st.steps) || [];
+	if (steps.length)
+		return steps.join('\n');
+	var markers = ['[Основной]', '[СЕТЬ]', '[КЛИЕНТ]', '[WRAP]', '[ЯДРО]', '[TURN]', 'Креды OK', '[WG]', 'WireGuard', 'device_id:', 'Конфиг получен'];
+	var out = [];
+	(logLines || []).forEach(function(line) {
+		for (var i = 0; i < markers.length; i++) {
+			if (String(line).indexOf(markers[i]) !== -1) {
+				out.push(line);
+				return;
+			}
+		}
+	});
+	return out.join('\n');
 }
 
 function syncGlobalsFormField(option, value) {
@@ -431,6 +491,9 @@ return view.extend({
 		self.wdttMap = null;
 		self._lastLogText = '';
 		self._lastRulesText = '';
+		self._lastConnectText = '';
+
+		promoteHashesToSlots();
 
 		m = new form.Map('wdtt', wdttPageTitle(status), wdttPageDescription(status));
 
@@ -472,13 +535,25 @@ return view.extend({
 		o.password = true;
 		o.rmempty = false;
 
-		o = s.option(form.TextValue, 'hashes', _('VK-хеши'),
-			_('До 4 хешей через запятую или ссылки vk.com/call/join/...'));
-		o.rows = 3;
-		o.rmempty = false;
+		o = s.option(form.Value, 'hash1', _('VK-хеш 1'),
+			_('Ссылка звонка VK или сам хеш. Один хеш = одна группа из 9 потоков. До 4 хешей.'));
+		o.placeholder = 'vk.com/call/join/... или хеш';
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'hash2', _('VK-хеш 2'));
+		o.placeholder = _('необязательно');
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'hash3', _('VK-хеш 3'));
+		o.placeholder = _('необязательно');
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'hash4', _('VK-хеш 4'));
+		o.placeholder = _('необязательно');
+		o.rmempty = true;
 
 		o = s.option(form.Value, 'workers', _('Потоки'),
-			_('Количество воркеров (кратно 3, рекомендуется 6–24 на роутере).'));
+			_('Кратно 9: 9 / 18 / 27 / 36. При 4 хешах ставьте 36, чтобы у каждой ссылки была своя группа.'));
 		o.datatype = 'uinteger';
 		o.default = '12';
 
@@ -665,6 +740,13 @@ return view.extend({
 					'id': 'wdtt-rules-log',
 					'style': 'max-height:160px;overflow:auto;font-size:12px;background:#252526;color:#d4d4d4;padding:10px;border-radius:4px;margin:0 0 12px;'
 				}, _('Загрузка...')),
+				E('h4', {}, _('Ход подключения')),
+				E('p', { 'class': 'hint' },
+					_('Этапы как в qWDTT: хеши, DNS, маскировка, VK Auth, WRAP, креды TURN, подъём WireGuard.')),
+				E('pre', {
+					'id': 'wdtt-connect-log',
+					'style': 'max-height:220px;overflow:auto;font-size:12px;background:#111;color:#7dcea0;padding:10px;border-radius:4px;margin:0 0 12px;white-space:pre-wrap;'
+				}, _('Загрузка...')),
 				E('h4', {}, _('Трафик')),
 				E('pre', {
 					'id': 'wdtt-traffic-line',
@@ -703,6 +785,9 @@ return view.extend({
 			syncRuleFieldsFromDom();
 			return applyRulesP.then(function() {
 				return mapSave();
+			}).then(function() {
+				joinHashSlots();
+				return uci.save();
 			}).then(function() {
 				return callApplyConfig().then(function() {
 					if (mode === 'selective')
@@ -923,6 +1008,19 @@ return view.extend({
 			self.updateTrafficLine(st);
 			self.refreshRulesLog();
 
+			var connectLog = document.getElementById('wdtt-connect-log');
+			if (connectLog) {
+				var logLines = (res[1] && res[1].lines) || [];
+				var stepText = formatConnectSteps(st, logLines);
+				if (!stepText)
+					stepText = _('Подключение ещё не начиналось — нажмите «Подключить».');
+				if (stepText !== self._lastConnectText) {
+					dom.content(connectLog, stepText);
+					self._lastConnectText = stepText;
+					connectLog.scrollTop = connectLog.scrollHeight;
+				}
+			}
+
 			var logView = document.getElementById('wdtt-log-view');
 			if (logView) {
 				var lines = (res[1] && res[1].lines) || [];
@@ -1051,7 +1149,7 @@ return view.extend({
 					throw new Error((res && res.error) || _('No related RPC reply'));
 				syncGlobalsFormField('peer', cfg.peer);
 				syncGlobalsFormField('password', cfg.password);
-				syncGlobalsFormField('hashes', cfg.hashes);
+				applyImportedHashes(cfg.hashes);
 				syncGlobalsFormField('workers', cfg.workers);
 				try { uci.unload('wdtt'); } catch (e) {}
 				return uci.load('wdtt');

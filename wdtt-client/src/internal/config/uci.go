@@ -130,16 +130,7 @@ func Load(path string) (*Settings, error) {
 	s.RoutingExcludedIPs = append(s.RoutingExcludedIPs, globals.lists["routing_excluded_ip"]...)
 	s.RoutingExcludedIPs = append(s.RoutingExcludedIPs, globals.lists["routing_excluded_ips"]...)
 
-	for _, h := range strings.Split(g["hashes"], ",") {
-		if h = normalizeHash(h); h != "" {
-			s.Hashes = append(s.Hashes, h)
-		}
-	}
-	for _, h := range strings.Split(g["hash"], ",") {
-		if h = normalizeHash(h); h != "" {
-			s.Hashes = append(s.Hashes, h)
-		}
-	}
+	s.Hashes = collectHashes(g)
 
 	if s.DeviceID = sanitizeDeviceID(s.DeviceID); s.DeviceID == "" {
 		s.DeviceID = resolveDeviceID()
@@ -268,6 +259,33 @@ func (s *Settings) IsFull() bool {
 
 func (s *Settings) IsExternal() bool {
 	return s.RoutingMode == RoutingExternal
+}
+
+// collectHashes собирает до 4 отдельных hashN и общий список hashes/hash.
+func collectHashes(g map[string]string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	add := func(raw string) {
+		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == '|'
+		}) {
+			h := normalizeHash(part)
+			if h == "" {
+				continue
+			}
+			if _, ok := seen[h]; ok {
+				continue
+			}
+			seen[h] = struct{}{}
+			out = append(out, h)
+		}
+	}
+	for i := 1; i <= 4; i++ {
+		add(g[fmt.Sprintf("hash%d", i)])
+	}
+	add(g["hashes"])
+	add(g["hash"])
+	return out
 }
 
 func normalizeHash(raw string) string {

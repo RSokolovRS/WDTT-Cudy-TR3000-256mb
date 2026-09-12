@@ -16,6 +16,10 @@ const workersPerGroup = 9
 // WorkersPerGroup — количество воркеров в одной группе (экспортировано для orchestrator).
 const WorkersPerGroup = workersPerGroup
 
+// allocateGateInterval — пауза между TURN Allocate внутри группы.
+// qWDTT 1.4.3: 100 мс, чтобы не ловить 486 quota при одновременном старте.
+const allocateGateInterval = 100 * time.Millisecond
+
 // WorkerGroup:
 // Запускает 9 потоков с одними кредами. Ротации нет — работает до смерти воркеров.
 func WorkerGroup(
@@ -153,11 +157,12 @@ func WorkerGroup(
 		return true
 	}
 
-	// Сигнализируем следующей группе, что мы успешно запустились (креды получены + 2 сек форы)
+	// Сигнализируем следующей группе (креды получены + короткая фора).
 	if signalReady != nil {
 		go func() {
+			delayMs := 500 + rand.Intn(250)
 			select {
-			case <-time.After(2000 * time.Millisecond):
+			case <-time.After(time.Duration(delayMs) * time.Millisecond):
 				if ctx.Err() == nil {
 					close(signalReady)
 					log.Printf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
@@ -167,11 +172,14 @@ func WorkerGroup(
 		}()
 	}
 
+	allocateTicker := time.NewTicker(allocateGateInterval)
+	defer allocateTicker.Stop()
+
 	for i, wid := range workerIDs {
 		wg.Add(1)
 
-		// Stagger: 500мс между воркерами
-		workerDelay := time.Duration(i) * 500 * time.Millisecond
+		// Stagger: 75 мс между воркерами (qWDTT 1.4.3)
+		workerDelay := time.Duration(i) * 75 * time.Millisecond
 
 		go func(wid int, delay time.Duration) {
 			defer wg.Done()
@@ -207,7 +215,7 @@ func WorkerGroup(
 				credsMu.RUnlock()
 
 				configDelivered, sessErr := RunSession(ctx, tp, peer, d, localPort,
-					getConf, cc, wid, &credsSnapshot, deviceID, password, stats)
+					getConf, cc, wid, &credsSnapshot, deviceID, password, stats, allocateTicker.C)
 
 				if getConf {
 					if configDelivered {
@@ -221,12 +229,21 @@ func WorkerGroup(
 					continue
 				}
 
+				fastRetry := false
+				quotaRetry := false
 				if sessErr != nil {
 					if ctx.Err() != nil {
 						return
 					}
 					errStr := sessErr.Error()
 					errStrLower := strings.ToLower(errStr)
+					fastRetry = strings.Contains(errStrLower, "broken pipe") ||
+						strings.Contains(errStrLower, "connection reset by peer") ||
+						strings.Contains(errStrLower, "unexpected eof") ||
+						errStrLower == "eof" || strings.HasSuffix(errStrLower, ": eof")
+					quotaRetry = strings.Contains(errStrLower, "turn квота") ||
+						strings.Contains(errStrLower, "quota") ||
+						strings.Contains(errStrLower, "486")
 
 					turnAllocAttrMissing := strings.Contains(errStrLower, "turn allocate") &&
 						strings.Contains(errStrLower, "attribute not found")
@@ -279,6 +296,11 @@ func WorkerGroup(
 
 				retryDelay := time.Duration(min(2<<uint(attempt-1), 30)) * time.Second
 				retryDelay += time.Duration(rand.Intn(3)) * time.Second
+				if quotaRetry {
+					retryDelay = time.Duration(30+rand.Intn(31)) * time.Second
+				} else if fastRetry {
+					retryDelay = time.Duration(1+rand.Intn(3)) * time.Second
+				}
 				select {
 				case <-time.After(retryDelay):
 				case <-ctx.Done():

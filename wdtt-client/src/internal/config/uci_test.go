@@ -39,6 +39,21 @@ func TestDeriveDeviceIDNotEmpty(t *testing.T) {
 	}
 }
 
+func TestCollectHashesSlotsAndLegacy(t *testing.T) {
+	got := collectHashes(map[string]string{
+		"hash1":  "https://vk.com/call/join/aaa111",
+		"hash2":  "bbb222",
+		"hash3":  "",
+		"hashes": "aaa111,ccc333",
+	})
+	if len(got) != 3 {
+		t.Fatalf("ожидалось 3 хеша, получили %v", got)
+	}
+	if got[0] != "aaa111" || got[1] != "bbb222" || got[2] != "ccc333" {
+		t.Fatalf("порядок/нормализация: %v", got)
+	}
+}
+
 func TestDeriveDeviceIDStable(t *testing.T) {
 	if first, second := deriveDeviceID(), deriveDeviceID(); first != second {
 		t.Errorf("ID нестабилен: %q != %q", first, second)

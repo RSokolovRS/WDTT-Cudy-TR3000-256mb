@@ -360,14 +360,31 @@ wdtt_import_profile() {
 	[ -n "$hashes" ] || return 1
 
 	case "$workers" in
-		''|*[!0-9]*) workers=16 ;;
+		''|*[!0-9]*) workers=18 ;;
 	esac
-	[ "$workers" -ge 3 ] 2>/dev/null || workers=16
+	[ "$workers" -ge 3 ] 2>/dev/null || workers=18
 	[ -n "$listen" ] || listen="127.0.0.1:9000"
 
 	wdtt_uci_set_opt peer "$peer" || return 1
 	wdtt_uci_set_opt password "$password" || return 1
 	wdtt_uci_set_opt hashes "$hashes" || return 1
+	# Раскладываем в отдельные слоты VK 1–4 (LuCI)
+	local i=1 part old_ifs
+	old_ifs="$IFS"
+	IFS=','
+	for part in $hashes; do
+		[ "$i" -le 4 ] || break
+		part="$(printf '%s' "$part" | tr -d '[:space:]')"
+		if [ -n "$part" ]; then
+			wdtt_uci_set_opt "hash$i" "$part" || return 1
+			i=$((i + 1))
+		fi
+	done
+	IFS="$old_ifs"
+	while [ "$i" -le 4 ]; do
+		wdtt_uci_set_opt "hash$i" "" || true
+		i=$((i + 1))
+	done
 	wdtt_uci_set_opt workers "$workers" || return 1
 	wdtt_uci_set_opt listen "$listen" || return 1
 	uci -q commit wdtt || return 1
