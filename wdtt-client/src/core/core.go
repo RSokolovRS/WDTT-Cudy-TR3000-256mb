@@ -187,6 +187,16 @@ func (c *Core) Start() (<-chan Event, error) {
 		dnsLabel = "doh-yandex"
 	}
 	log.Printf("[Основной] Хешей=%d, Потоков=%d", len(c.cfg.Hashes), n)
+	// Группа берёт хеш по кругу: хешей меньше групп — ссылка переиспользуется,
+	// больше — лишние простаивают (одна группа умеет только один хеш).
+	switch groups := n / workersPerGroup; {
+	case len(c.cfg.Hashes) > groups:
+		log.Printf("[Основной] Используются только первые %d хеша(ей): при %d хешах поставьте Потоки=%d",
+			groups, len(c.cfg.Hashes), len(c.cfg.Hashes)*workersPerGroup)
+	case groups > len(c.cfg.Hashes):
+		log.Printf("[Основной] %d ссылка(и) на %d групп(ы): группы делят ссылку, но каждая берёт свои креды VK под отдельным device_id",
+			len(c.cfg.Hashes), groups)
+	}
 	if c.cfg.RawMode {
 		log.Printf("[СЕТЬ] Режим: VPN (raw-IP, без WireGuard/DTLS)")
 	} else {
@@ -319,6 +329,12 @@ func (c *Core) Start() (<-chan Event, error) {
 		wg.Wait()
 		close(configCh)
 		log.Println("[CORE] все воркеры завершены")
+		if ctx.Err() == nil && atomic.LoadInt32(&stats.ActiveConnections) == 0 {
+			msg := "Ни один поток не поднялся: все VK-хеши мертвы или недоступны. Создайте новый звонок VK и замените ссылку."
+			log.Printf("[ЯДРО] Ошибка: %s", msg)
+			c.emit(Event{Type: EventError, Message: msg})
+			c.emit(Event{Type: EventState, Status: "error"})
+		}
 	}()
 
 	return c.events, nil

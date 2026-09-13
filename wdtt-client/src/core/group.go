@@ -44,6 +44,23 @@ func WorkerGroup(
 	emitCaptchaRequest func(mode, redirectURI, sessionToken string),
 	onTurnURLs func(urls []string),
 ) {
+	// Эстафету следующей группе обязаны передать на любом выходе, включая
+	// мёртвый хеш и FATAL_AUTH: иначе группа со своим (возможно живым) хешем
+	// навсегда останется в "Ожидание сигнала от предыдущей группы".
+	var batonOnce sync.Once
+	releaseBaton := func(msg string) {
+		if signalReady == nil {
+			return
+		}
+		batonOnce.Do(func() {
+			close(signalReady)
+			if msg != "" {
+				log.Printf("[ГРУППА #%d] %s", groupID, msg)
+			}
+		})
+	}
+	defer releaseBaton("")
+
 	// Каскадный запуск: ждем свою очередь
 	if waitReady != nil {
 		log.Printf("[ГРУППА #%d] Ожидание сигнала от предыдущей группы...", groupID)
@@ -96,7 +113,8 @@ func WorkerGroup(
 		}
 		log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
 		if callErr, ok := asCallUnavailableError(err); ok {
-			log.Printf("[ГРУППА #%d] Звонок недоступен (хеш мёртв?): %v — стоп ретраев", groupID, callErr)
+			log.Printf("[ГРУППА #%d] Хеш %s... мёртв (%v) — замените ссылку звонка VK в LuCI", groupID, shortHash, callErr)
+			releaseBaton("Передаём эстафету следующей группе (её хеш может быть живым)")
 			return
 		}
 		if strings.Contains(err.Error(), "FATAL_AUTH") || strings.Contains(err.Error(), "context canceled") {
@@ -164,8 +182,7 @@ func WorkerGroup(
 			select {
 			case <-time.After(time.Duration(delayMs) * time.Millisecond):
 				if ctx.Err() == nil {
-					close(signalReady)
-					log.Printf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
+					releaseBaton("Успешный старт! Передача эстафеты следующей группе...")
 				}
 			case <-ctx.Done():
 			}
