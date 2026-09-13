@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — профили + красные ошибки в логе v3.18.3 */
+/* WDTT overview.js — профили + красные ошибки в логе v3.18.4 */
 'require view';
 'require ui';
 'require dom';
@@ -319,8 +319,10 @@ function applyProfileToGlobals(sid) {
 	uci.set('wdtt', 'globals', 'active_profile', sid);
 }
 
-function fillProfileSelect() {
-	var sel = document.getElementById('wdtt-profile-select');
+// sel передаётся при рендере: узла ещё нет в документе, getElementById вернёт
+// null, и список молча останется пустым.
+function fillProfileSelect(sel) {
+	sel = sel || document.getElementById('wdtt-profile-select');
 	if (!sel)
 		return;
 	var cur = activeProfileId();
@@ -338,6 +340,15 @@ function fillProfileSelect() {
 	});
 	if (!cur && sel.value === '' && profiles.length)
 		sel.selectedIndex = 0;
+}
+
+function renderProfileSelect() {
+	var sel = E('select', {
+		'id': 'wdtt-profile-select',
+		'style': 'width:100%;max-width:420px'
+	});
+	fillProfileSelect(sel);
+	return sel;
 }
 
 function logLineKind(line) {
@@ -651,10 +662,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('Профиль')),
 					E('div', { 'class': 'cbi-value-field' }, [
-						E('select', {
-							'id': 'wdtt-profile-select',
-							'style': 'width:100%;max-width:420px'
-						})
+						renderProfileSelect()
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [

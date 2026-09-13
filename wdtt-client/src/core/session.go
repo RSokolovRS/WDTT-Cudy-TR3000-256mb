@@ -266,6 +266,11 @@ func RunSession(
 		}
 
 		pipeA, pipeB = connutil.AsyncPacketPipe()
+		// Закрываем на любом выходе: ниже есть ранние return (хендшейк, конфиг).
+		defer func() {
+			_ = pipeA.Close()
+			_ = pipeB.Close()
+		}()
 
 		stopRelay := context.AfterFunc(sessCtx, func() {
 			_ = relay.SetDeadline(time.Now())
@@ -388,14 +393,21 @@ func RunSession(
 	defer atomic.AddInt32(&stats.ActiveConnections, -1)
 
 	// Запрос конфига
+	// Без конфига туннеля нет вообще, поэтому неудачную попытку завершаем
+	// ошибкой: сессия закроется, право на запрос вернётся в пул, и следующая
+	// сессия попробует снова. Раньше воркер уходил в READY, держал право
+	// запроса до самой своей смерти и конфиг не запрашивал больше никто.
 	if getConfig && configCh != nil && tp.RawMode {
 		ip, dnsCSV, mtu, confErr := RequestRawConfig(activeConn, deviceID, password)
-		if confErr != nil {
+		switch {
+		case confErr != nil:
 			if strings.Contains(confErr.Error(), "FATAL_AUTH") {
 				return false, confErr
 			}
-			log.Printf("[ВОРКЕР #%d] Ошибка RAW-конфига: %v", sessionID, confErr)
-		} else if ip != "" {
+			return false, fmt.Errorf("RAW-конфиг не получен, сервер запущен без -listen-raw?: %w", confErr)
+		case ip == "":
+			return false, fmt.Errorf("сервер ещё не назначил raw IP, повторим сессию")
+		default:
 			conf := fmt.Sprintf("RAWCONF:%s|%s|%d", ip, dnsCSV, mtu)
 			select {
 			case configCh <- conf:
@@ -404,18 +416,18 @@ func RunSession(
 			default:
 				configDelivered = true
 			}
-		} else {
-			log.Printf("[ВОРКЕР #%d] Сервер ещё не назначил raw IP, повторим позже", sessionID)
 		}
 	} else if getConfig && configCh != nil {
 		conf, confErr := RequestConfig(activeConn, localPort, deviceID, password)
-		if confErr != nil {
-			errStr := confErr.Error()
-			if strings.Contains(errStr, "FATAL_AUTH") {
+		switch {
+		case confErr != nil:
+			if strings.Contains(confErr.Error(), "FATAL_AUTH") {
 				return false, confErr
 			}
-			log.Printf("[ВОРКЕР #%d] Ошибка конфига: %v", sessionID, confErr)
-		} else if conf != "" {
+			return false, fmt.Errorf("WireGuard-конфиг не получен: %w", confErr)
+		case conf == "":
+			return false, fmt.Errorf("сервер ещё не выдал WireGuard-конфиг, повторим сессию")
+		default:
 			select {
 			case configCh <- conf:
 				configDelivered = true
@@ -424,8 +436,6 @@ func RunSession(
 				configDelivered = true
 				log.Printf("[ВОРКЕР #%d] Конфиг уже был доставлен другим воркером", sessionID)
 			}
-		} else {
-			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал WireGuard-конфиг, повторим позже", sessionID)
 		}
 	} else if authErr := SendAuth(activeConn, deviceID, password); authErr != nil {
 		log.Printf("[ВОРКЕР #%d] Ошибка авторизации: %v", sessionID, authErr)
@@ -571,12 +581,6 @@ func RunSession(
 	sessCancel()
 	relayWg.Wait()
 	sessionWg.Wait()
-	if pipeA != nil {
-		_ = pipeA.Close()
-	}
-	if pipeB != nil {
-		_ = pipeB.Close()
-	}
 	log.Printf("[СЕССИЯ #%d] Завершена", sessionID)
 	select {
 	case sessionErr := <-sessionErrCh:
