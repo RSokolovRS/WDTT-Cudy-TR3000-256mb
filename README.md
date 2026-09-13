@@ -4,7 +4,7 @@ OpenWRT-клиент WDTT (WireGuard over VK TURN) с полным или выб
 
 ## Быстрая установка на роутер
 
-### Рабочие ссылки v3.18.0 (RAW-режим + VK-хеши 1–4 + ход подключения)
+### Рабочие ссылки v3.18.1 (профили + красные ошибки + RAW)
 
 | Назначение | URL |
 |------------|-----|
@@ -103,7 +103,7 @@ pgrep wdttd || echo "OK: wdttd not running"
 
 После `--clean`: `vk_auth_mode=vkcalls`, `captcha_mode=wv`, **домены пустые** — добавьте в LuCI → Правила маршрутизации. Проверьте peer/password/hashes → Подключить.
 
-Должно быть `WDTT installer v3.18.0+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
+Должно быть `WDTT installer v3.18.1+`, проверки `[OK] routing (nft+nftset)`, `dnsmasq nftset`, `firewall lan→wdtt`.
 
 После **Подключить** datapath (selective/full) поднимается сам: `/usr/libexec/wdtt/datapath ensure`. Ручной `routing start` не нужен.
 
@@ -514,6 +514,16 @@ uci commit wdtt && /etc/init.d/wdtt restart
 По умолчанию трафик идёт **WireGuard + DTLS** (`tunnel_mode=wg`). Можно включить **RAW** — сырые IP без WireGuard и без DTLS, как на Android qWDTT (`-mode rawtun`).
 
 Из qWDTT 1.4.3 также перенесены быстрый старт воркеров (75 мс stagger, эстафета групп ~0.5 с) и быстрый reconnect при EOF / broken pipe.
+
+## Профили подключения и цвет логов
+
+В LuCI блок **Профили подключения**: несколько серверов (peer/пароль/хеши/RAW) сохраняются в UCI `config profile` и переключаются одной кнопкой. Если туннель уже включён, «Переключить» перезапускает его. Импорт `wdtt://` / `qwdtt://` сразу кладёт набор в профили.
+
+В **Ходе подключения** и **Логе wdttd** ошибки (`FATAL`, `DENIED`, `954`, «хеш мёртв», `Ошибка`) красные, предупреждения жёлтые, успешные шаги зелёные.
+
+```bash
+uci show wdtt | grep '=profile'
+```
 
 ## RAW-режим (tunnel_mode=raw)
 

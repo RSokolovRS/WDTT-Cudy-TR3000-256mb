@@ -27,6 +27,17 @@ config globals 'globals'
 	# selective = правила WDTT; full = весь трафик; external = только туннель (Podkop/PBR)
 	option routing_mode 'external'
 	option uplink_iface 'auto'
+	option active_profile ''
+
+# Сохранённые профили подключения (LuCI → Профили). Не трогает routing/device_id.
+# config profile 'home'
+#	option name 'Дом'
+#	option peer '203.0.113.10:56000'
+#	option password ''
+#	option hash1 ''
+#	option workers '9'
+#	option tunnel_mode 'wg'
+#	option turn_transport 'udp'
 
 # Пустое правило — домены в LuCI → «Домены» (option domain_list, не list domain)
 config rule 'route1'

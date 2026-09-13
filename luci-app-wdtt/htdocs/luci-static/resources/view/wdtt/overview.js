@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — RAW tunnel_mode + VK hash 1–4 v3.18.0 */
+/* WDTT overview.js — профили + красные ошибки в логе v3.18.1 */
 'require view';
 'require ui';
 'require dom';
@@ -225,11 +225,161 @@ function applyImportedHashes(raw) {
 	uci.set('wdtt', 'globals', 'hashes', parts.join(','));
 }
 
+var PROFILE_FIELDS = [
+	'peer', 'password', 'hash1', 'hash2', 'hash3', 'hash4', 'hashes',
+	'workers', 'mtu', 'listen', 'captcha_mode', 'vk_auth_mode',
+	'obfs_mode', 'go_dns', 'turn_transport', 'tunnel_mode',
+	'turn_host', 'turn_port'
+];
+
+function cleanProfileName(s) {
+	return String(s || '').replace(/['"\n\r]/g, '').trim().slice(0, 48);
+}
+
+function listProfiles() {
+	var out = [];
+	uci.sections('wdtt', 'profile', function(s) {
+		if (!s || !s['.name'])
+			return;
+		out.push({
+			id: s['.name'],
+			name: s.name || s['.name'],
+			peer: s.peer || ''
+		});
+	});
+	return out;
+}
+
+function findProfileByName(name) {
+	var want = cleanProfileName(name).toLowerCase();
+	var found = null;
+	if (!want)
+		return null;
+	uci.sections('wdtt', 'profile', function(s) {
+		if (found || !s)
+			return;
+		if (String(s.name || s['.name'] || '').toLowerCase() === want)
+			found = s['.name'];
+	});
+	return found;
+}
+
+function activeProfileId() {
+	return String(uci.get('wdtt', 'globals', 'active_profile') || '').trim();
+}
+
+function activeProfileLabel() {
+	var id = activeProfileId();
+	if (!id)
+		return _('не выбран');
+	var name = uci.get('wdtt', id, 'name') || id;
+	var peer = uci.get('wdtt', id, 'peer') || '';
+	return peer ? (name + ' — ' + peer) : name;
+}
+
+function globalsFieldSelector(option) {
+	return '[data-widget-id="wdtt.globals.' + option + '"] input, ' +
+		'[data-widget-id="wdtt.globals.' + option + '"] textarea, ' +
+		'[data-widget-id="wdtt.globals.' + option + '"] select, ' +
+		'input[name="cbid.wdtt.globals.' + option + '"], ' +
+		'textarea[name="cbid.wdtt.globals.' + option + '"], ' +
+		'select[name="cbid.wdtt.globals.' + option + '"]';
+}
+
+function readGlobalsFormField(option) {
+	var nodes = document.querySelectorAll(globalsFieldSelector(option));
+	return nodes.length ? nodes[0].value : null;
+}
+
+function pullGlobalsFromForm() {
+	PROFILE_FIELDS.forEach(function(opt) {
+		var v = readGlobalsFormField(opt);
+		if (v !== null)
+			uci.set('wdtt', 'globals', opt, v);
+	});
+	joinHashSlots();
+}
+
+function copyGlobalsToProfile(sid) {
+	pullGlobalsFromForm();
+	PROFILE_FIELDS.forEach(function(opt) {
+		uci.set('wdtt', sid, opt, uci.get('wdtt', 'globals', opt) || '');
+	});
+}
+
+function applyProfileToGlobals(sid) {
+	PROFILE_FIELDS.forEach(function(opt) {
+		var val = uci.get('wdtt', sid, opt);
+		if (val == null)
+			val = '';
+		uci.set('wdtt', 'globals', opt, val);
+		syncGlobalsFormField(opt, val);
+	});
+	joinHashSlots();
+	uci.set('wdtt', 'globals', 'active_profile', sid);
+}
+
+function fillProfileSelect() {
+	var sel = document.getElementById('wdtt-profile-select');
+	if (!sel)
+		return;
+	var cur = activeProfileId();
+	var profiles = listProfiles();
+	sel.innerHTML = '';
+	sel.appendChild(E('option', { 'value': '' }, profiles.length
+		? _('— выбрать профиль —')
+		: _('нет сохранённых профилей')));
+	profiles.forEach(function(p) {
+		var label = p.peer ? (p.name + ' — ' + p.peer) : p.name;
+		var opt = E('option', { 'value': p.id }, label);
+		if (p.id === cur)
+			opt.selected = true;
+		sel.appendChild(opt);
+	});
+	if (!cur && sel.value === '' && profiles.length)
+		sel.selectedIndex = 0;
+}
+
+function logLineKind(line) {
+	var s = String(line || '');
+	if (/FATAL|DENIED|error_code|хеш мёртв|Invalid join|non-retryable|Ошибка |FAIL:|failed|не удалось|некорректн|сломан|FATAL_AUTH/i.test(s))
+		return 'err';
+	if (/WARN|Warning|предупрежд/i.test(s))
+		return 'warn';
+	if (/Креды OK|поднят|READY|Соединение установлено|TUN |Конфиг получен|RAW-конфиг получен/i.test(s))
+		return 'ok';
+	return '';
+}
+
+function logLineColor(kind) {
+	if (kind === 'err')
+		return '#f44747';
+	if (kind === 'warn')
+		return '#dcdcaa';
+	if (kind === 'ok')
+		return '#4ec9b0';
+	return '';
+}
+
+function renderColoredLog(container, lines, emptyText, defaultColor) {
+	if (!container)
+		return;
+	if (!lines || !lines.length) {
+		dom.content(container, emptyText || _('Лог пуст'));
+		return;
+	}
+	dom.content(container, lines.map(function(line) {
+		var kind = logLineKind(line);
+		var color = logLineColor(kind) || defaultColor || '#d4d4d4';
+		return E('div', { 'style': 'color:' + color }, line);
+	}));
+}
+
 function formatConnectSteps(st, logLines) {
 	var steps = (st && st.steps) || [];
 	if (steps.length)
 		return steps.join('\n');
-	var markers = ['[Основной]', '[СЕТЬ]', '[КЛИЕНТ]', '[WRAP]', '[ЯДРО]', '[TURN]', 'Креды OK', '[WG]', 'WireGuard', 'device_id:', 'Конфиг получен'];
+	var markers = ['[Основной]', '[СЕТЬ]', '[КЛИЕНТ]', '[WRAP]', '[ЯДРО]', '[TURN]', 'Креды OK', '[WG]', '[RAW]', '[ПРЯМОЙ]', 'WireGuard', 'device_id:', 'Конфиг получен', 'Ошибка', 'FATAL', 'DENIED', 'хеш мёртв', 'error_code'];
 	var out = [];
 	(logLines || []).forEach(function(line) {
 		for (var i = 0; i < markers.length; i++) {
@@ -243,12 +393,7 @@ function formatConnectSteps(st, logLines) {
 }
 
 function syncGlobalsFormField(option, value) {
-	var nodes = document.querySelectorAll(
-		'[data-widget-id="wdtt.globals.' + option + '"] input, ' +
-		'[data-widget-id="wdtt.globals.' + option + '"] textarea, ' +
-		'input[name="cbid.wdtt.globals.' + option + '"], ' +
-		'textarea[name="cbid.wdtt.globals.' + option + '"]'
-	);
+	var nodes = document.querySelectorAll(globalsFieldSelector(option));
 	for (var i = 0; i < nodes.length; i++) {
 		nodes[i].value = value;
 	}
@@ -496,6 +641,53 @@ return view.extend({
 		promoteHashesToSlots();
 
 		m = new form.Map('wdtt', wdttPageTitle(status), wdttPageDescription(status));
+
+		/* --- Сохранённые профили (как в Android / qWDTT) --- */
+		s = m.section(form.NamedSection, 'globals', 'globals', _('Профили подключения'));
+		s.render = L.bind(function() {
+			return E('div', { 'class': 'cbi-section' }, [
+				E('p', { 'class': 'hint' },
+					_('Сохраните несколько серверов и переключайтесь между ними, как в Android qWDTT. Активный профиль копируется в настройки ниже.')),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('Профиль')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('select', {
+							'id': 'wdtt-profile-select',
+							'style': 'width:100%;max-width:420px'
+						})
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('Имя нового')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('input', {
+							'id': 'wdtt-profile-name',
+							'type': 'text',
+							'style': 'width:100%;max-width:420px',
+							'placeholder': _('Дом, Работа, RAW VPS…')
+						})
+					])
+				]),
+				E('div', { 'class': 'cbi-page-actions', 'style': 'margin-top:8px' }, [
+					E('button', {
+						'class': 'btn cbi-button cbi-button-action important',
+						'click': ui.createHandlerFn(self, self.handleProfileSwitch)
+					}, _('Переключить')),
+					E('button', {
+						'class': 'btn cbi-button cbi-button-apply',
+						'click': ui.createHandlerFn(self, self.handleProfileSave)
+					}, _('Сохранить текущий')),
+					E('button', {
+						'class': 'btn cbi-button cbi-button-apply',
+						'click': ui.createHandlerFn(self, self.handleProfileSaveAs)
+					}, _('Сохранить как…')),
+					E('button', {
+						'class': 'btn cbi-button cbi-button-reset',
+						'click': ui.createHandlerFn(self, self.handleProfileDelete)
+					}, _('Удалить'))
+				])
+			]);
+		}, s);
 
 		/* --- Импорт wdtt:// / qwdtt:// --- */
 		s = m.section(form.NamedSection, 'globals', 'globals', _('Импорт профиля'));
@@ -750,9 +942,9 @@ return view.extend({
 				E('h4', {}, _('Ход подключения')),
 				E('p', { 'class': 'hint' },
 					_('Этапы как в qWDTT: хеши, DNS, маскировка, VK Auth, WRAP, креды TURN, подъём WireGuard.')),
-				E('pre', {
+				E('div', {
 					'id': 'wdtt-connect-log',
-					'style': 'max-height:220px;overflow:auto;font-size:12px;background:#111;color:#7dcea0;padding:10px;border-radius:4px;margin:0 0 12px;white-space:pre-wrap;'
+					'style': 'max-height:220px;overflow:auto;font-size:12px;font-family:monospace;background:#111;color:#7dcea0;padding:10px;border-radius:4px;margin:0 0 12px;white-space:pre-wrap;line-height:1.45'
 				}, _('Загрузка...')),
 				E('h4', {}, _('Трафик')),
 				E('pre', {
@@ -760,9 +952,9 @@ return view.extend({
 					'style': 'font-size:12px;background:#252526;color:#4ec9b0;padding:8px 10px;border-radius:4px;margin:0 0 12px;white-space:pre;'
 				}, '-'),
 				E('h4', {}, _('Лог wdttd')),
-				E('pre', {
+				E('div', {
 					'id': 'wdtt-log-view',
-					'style': 'max-height:320px;overflow:auto;font-size:12px;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;margin:0;'
+					'style': 'max-height:320px;overflow:auto;font-size:12px;font-family:monospace;background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:4px;margin:0;white-space:pre-wrap;line-height:1.45'
 				}, _('Загрузка...'))
 			]);
 		}, s);
@@ -804,7 +996,10 @@ return view.extend({
 			});
 		};
 
-		return m.render();
+		return Promise.resolve(m.render()).then(function(node) {
+			fillProfileSelect();
+			return node;
+		});
 	},
 
 	renderCaptchaPanel: function(cap) {
@@ -898,6 +1093,7 @@ return view.extend({
 			(st.nft_ok === false || st.nft_ok === 0 || st.nft_ok === '0')
 				? E('tr', {}, [E('td', {}, _('nft wdtt')), E('td', { 'style': 'color:#c00' }, _('нет таблицы'))])
 				: '',
+			E('tr', {}, [E('td', {}, _('Профиль')), E('td', {}, activeProfileLabel())]),
 			E('tr', {}, [E('td', {}, _('Воркеры')), E('td', {}, String(st.workers || 0))]),
 			E('tr', {}, [E('td', {}, _('Uptime')), E('td', {}, (st.uptime_sec || 0) + ' s')]),
 			st.last_error ? E('tr', {}, [E('td', {}, _('Ошибка')), E('td', { 'style': 'color:#c00' }, st.last_error)]) : ''
@@ -1022,7 +1218,10 @@ return view.extend({
 				if (!stepText)
 					stepText = _('Подключение ещё не начиналось — нажмите «Подключить».');
 				if (stepText !== self._lastConnectText) {
-					dom.content(connectLog, stepText);
+					if (stepText.indexOf('\n') === -1 && stepText.indexOf('[') === -1)
+						dom.content(connectLog, stepText);
+					else
+						renderColoredLog(connectLog, stepText.split('\n'), stepText, '#7dcea0');
 					self._lastConnectText = stepText;
 					connectLog.scrollTop = connectLog.scrollHeight;
 				}
@@ -1034,7 +1233,10 @@ return view.extend({
 				var newLog = lines.length ? lines.join('\n') : _('Лог пуст');
 				if (newLog !== self._lastLogText) {
 					var atBottom = logView.scrollHeight - logView.scrollTop <= logView.clientHeight + 5;
-					dom.content(logView, newLog);
+					if (lines.length)
+						renderColoredLog(logView, lines, _('Лог пуст'), '#d4d4d4');
+					else
+						dom.content(logView, _('Лог пуст'));
 					self._lastLogText = newLog;
 					if (atBottom)
 						logView.scrollTop = logView.scrollHeight;
@@ -1138,6 +1340,121 @@ return view.extend({
 		});
 	},
 
+	handleProfileSaveAs: function() {
+		var input = document.getElementById('wdtt-profile-name');
+		var name = cleanProfileName(input && input.value);
+		if (!name)
+			name = cleanProfileName(readGlobalsFormField('peer') || uci.get('wdtt', 'globals', 'peer') || '');
+		if (!name) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Введите имя профиля')), 4000, 'warning');
+			return Promise.resolve();
+		}
+		return this.saveProfileByName(name, false);
+	},
+
+	handleProfileSave: function() {
+		var sel = document.getElementById('wdtt-profile-select');
+		var sid = (sel && sel.value) || activeProfileId();
+		if (!sid)
+			return this.handleProfileSaveAs();
+		var name = uci.get('wdtt', sid, 'name') || sid;
+		copyGlobalsToProfile(sid);
+		uci.set('wdtt', sid, 'name', name);
+		uci.set('wdtt', 'globals', 'active_profile', sid);
+		return this.persistProfiles(_('Профиль сохранён:') + ' ' + name);
+	},
+
+	saveProfileByName: function(name, silent) {
+		name = cleanProfileName(name);
+		var sid = findProfileByName(name);
+		if (!sid)
+			sid = uci.add('wdtt', 'profile');
+		if (!sid) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Не удалось создать профиль')), 4000, 'danger');
+			return Promise.resolve();
+		}
+		uci.set('wdtt', sid, 'name', name);
+		copyGlobalsToProfile(sid);
+		uci.set('wdtt', 'globals', 'active_profile', sid);
+		var input = document.getElementById('wdtt-profile-name');
+		if (input)
+			input.value = '';
+		return this.persistProfiles(silent ? null : (_('Профиль сохранён:') + ' ' + name));
+	},
+
+	handleProfileSwitch: function() {
+		var self = this;
+		var sel = document.getElementById('wdtt-profile-select');
+		var sid = sel && sel.value;
+		if (!sid) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Выберите профиль')), 3000, 'warning');
+			return Promise.resolve();
+		}
+		applyProfileToGlobals(sid);
+		var name = uci.get('wdtt', sid, 'name') || sid;
+		var wasOn = uci.get('wdtt', 'globals', 'enabled') === '1';
+		return uci.save().then(function() {
+			return (typeof uci.apply === 'function') ? uci.apply() : Promise.resolve();
+		}).then(function() {
+			return callApplyConfig();
+		}).then(function(res) {
+			if (res && res.error)
+				throw new Error(res.error);
+			fillProfileSelect();
+			self._lastConnectText = '';
+			self._lastLogText = '';
+			if (!wasOn) {
+				ui.addTimeLimitedNotification(null, E('p', {},
+					_('Профиль:') + ' ' + name + '. ' + _('Нажмите «Подключить».')), 5000, 'success');
+				return self.pollStatus();
+			}
+			return callDisconnect().then(function() {
+				return callConnect();
+			}).then(function(cres) {
+				if (cres && cres.error)
+					throw new Error(cres.error);
+				self.syncEnabledFlag('1');
+				ui.addTimeLimitedNotification(null, E('p', {},
+					_('Переключено на') + ' «' + name + '». ' + _('Туннель перезапускается...')), 5000, 'success');
+				return self.pollStatus();
+			});
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
+	},
+
+	handleProfileDelete: function() {
+		var sel = document.getElementById('wdtt-profile-select');
+		var sid = sel && sel.value;
+		if (!sid) {
+			ui.addTimeLimitedNotification(null, E('p', {}, _('Выберите профиль')), 3000, 'warning');
+			return Promise.resolve();
+		}
+		var name = uci.get('wdtt', sid, 'name') || sid;
+		if (!window.confirm(_('Удалить профиль') + ' «' + name + '»?'))
+			return Promise.resolve();
+		uci.remove('wdtt', sid);
+		if (activeProfileId() === sid)
+			uci.set('wdtt', 'globals', 'active_profile', '');
+		return this.persistProfiles(_('Профиль удалён:') + ' ' + name);
+	},
+
+	persistProfiles: function(okMsg) {
+		var self = this;
+		return uci.save().then(function() {
+			return (typeof uci.apply === 'function') ? uci.apply() : Promise.resolve();
+		}).then(function() {
+			return callApplyConfig().catch(function() { return {}; });
+		}).then(function() {
+			fillProfileSelect();
+			if (okMsg)
+				ui.addTimeLimitedNotification(null, E('p', {}, okMsg), 4000, 'success');
+			return self.pollStatus();
+		}).catch(function(e) {
+			ui.addTimeLimitedNotification(null, E('p', {}, e.message || String(e)), 5000, 'danger');
+		});
+	},
+
 	handleImportURI: function() {
 		var self = this;
 		var ta = document.getElementById('wdtt-import-uri');
@@ -1163,10 +1480,17 @@ return view.extend({
 			}).then(function() {
 				if (ta)
 					ta.value = '';
-				ui.addTimeLimitedNotification(null, E('p', {},
-					_('Импортировано:') + ' ' + (cfg.name || cfg.peer) + '. ' +
-					_('Проверьте поля и нажмите «Подключить».')), 6000, 'success');
-				return self.pollStatus();
+				var pname = cleanProfileName(cfg.name || cfg.peer);
+				var after = Promise.resolve();
+				if (pname)
+					after = self.saveProfileByName(pname, true);
+				return after.then(function() {
+					ui.addTimeLimitedNotification(null, E('p', {},
+						_('Импортировано:') + ' ' + (cfg.name || cfg.peer) + '. ' +
+						_('Профиль сохранён — можно переключаться. Нажмите «Подключить».')), 6000, 'success');
+					fillProfileSelect();
+					return self.pollStatus();
+				});
 			}).catch(function(e) {
 				var msg = e.message || String(e);
 				if (/no related rpc reply/i.test(msg))
