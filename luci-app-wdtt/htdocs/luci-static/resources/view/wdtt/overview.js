@@ -1,5 +1,5 @@
 'use strict';
-/* WDTT overview.js — профили + красные ошибки в логе v3.18.2 */
+/* WDTT overview.js — профили + красные ошибки в логе v3.18.3 */
 'require view';
 'require ui';
 'require dom';

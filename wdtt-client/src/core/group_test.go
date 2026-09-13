@@ -20,7 +20,7 @@ func TestWorkerGroupReleasesBatonOnEarlyExit(t *testing.T) {
 	go func() {
 		defer close(done)
 		WorkerGroup(ctx, 1, 0, &TurnParams{Hashes: []string{"deadhash"}}, nil, nil, "9000",
-			false, nil, []int{1}, &pauseFlag, "dev", "pass", NewStats(),
+			nil, nil, nil, []int{1}, &pauseFlag, "dev", "pass", NewStats(),
 			waitReady, signalReady, nil, nil, nil, nil, nil)
 	}()
 

@@ -289,9 +289,11 @@ func (c *Core) Start() (<-chan Event, error) {
 		var wg sync.WaitGroup
 		workerIDCounter := 1
 		var prevWaitReady <-chan struct{}
+		// Общие на все группы: конфиг у сервера просит любая живая группа,
+		// но ровно один воркер за раз и ровно один раз всего.
+		var configSent, configInFlight int32
 
 		for g := 0; g < numGroups; g++ {
-			isFirst := g == 0
 			var myWaitReady <-chan struct{}
 			var mySignalReady chan<- struct{}
 
@@ -311,19 +313,15 @@ func (c *Core) Start() (<-chan Event, error) {
 			}
 
 			gID := g + 1
-			var cc chan<- string
-			if isFirst {
-				cc = configCh
-			}
 
 			wg.Add(1)
-			go func(groupID int, isFirstGroup bool, configChan chan<- string, workerIds []int, startHashIndex int, waitR <-chan struct{}, sigR chan<- struct{}) {
+			go func(groupID int, workerIds []int, startHashIndex int, waitR <-chan struct{}, sigR chan<- struct{}) {
 				defer wg.Done()
 				WorkerGroup(ctx, groupID, startHashIndex, tp, peer, disp, localPort,
-					isFirstGroup, configChan, workerIds, &c.pauseFlag,
+					configCh, &configSent, &configInFlight, workerIds, &c.pauseFlag,
 					c.cfg.DeviceID, c.cfg.Password, stats, waitR, sigR,
 					c.CaptchaResultChan, c.getCaptchaMode, c.getVKAuthMode, emitCaptchaRequest, c.AddTurnIPs)
-			}(gID, isFirst, cc, ids, g, myWaitReady, mySignalReady)
+			}(gID, ids, g, myWaitReady, mySignalReady)
 		}
 
 		wg.Wait()

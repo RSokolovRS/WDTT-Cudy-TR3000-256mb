@@ -30,8 +30,9 @@ func WorkerGroup(
 	peer *net.UDPAddr,
 	d *Dispatcher,
 	localPort string,
-	getConfig bool,
 	configCh chan<- string,
+	configSent *int32,
+	configInFlight *int32,
 	workerIDs []int,
 	pauseFlag *int32,
 	deviceID, password string,
@@ -71,10 +72,10 @@ func WorkerGroup(
 		}
 	}
 
-	var configSent int32
-	if !getConfig {
-		configSent = 1
-	}
+	// Право запросить конфиг у сервера общее для всех групп: раньше его имела
+	// только группа #1, и её мёртвый хеш означал, что конфиг не придёт никогда —
+	// остальные группы поднимали DTLS, но интерфейса не существовало.
+	getConfig := configCh != nil && configSent != nil && configInFlight != nil
 
 	// Doze-mode пауза
 	for atomic.LoadInt32(pauseFlag) != 0 {
@@ -137,7 +138,6 @@ func WorkerGroup(
 		onTurnURLs(creds.TurnURLs)
 	}
 
-	var configRequestInFlight int32
 	var wg sync.WaitGroup
 	var credsMu sync.RWMutex
 	var refreshMu sync.Mutex
@@ -218,8 +218,8 @@ func WorkerGroup(
 				}
 
 				getConf := false
-				if shouldGetConfig && atomic.LoadInt32(&configSent) == 0 {
-					getConf = atomic.CompareAndSwapInt32(&configRequestInFlight, 0, 1)
+				if shouldGetConfig && atomic.LoadInt32(configSent) == 0 {
+					getConf = atomic.CompareAndSwapInt32(configInFlight, 0, 1)
 				}
 				var cc chan<- string
 				if getConf {
@@ -236,9 +236,9 @@ func WorkerGroup(
 
 				if getConf {
 					if configDelivered {
-						atomic.StoreInt32(&configSent, 1)
+						atomic.StoreInt32(configSent, 1)
 					} else {
-						atomic.StoreInt32(&configRequestInFlight, 0)
+						atomic.StoreInt32(configInFlight, 0)
 					}
 				}
 
